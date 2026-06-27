@@ -93,7 +93,7 @@ async def create_episode(
     # Run LangGraph workflow (simulated or real)
     try:
         initial_state = EpisodeState(
-            raw_audio_url=audio_path_or_url,
+            raw_audio_url=media_path_or_url,
             transcript=None,
             generated_content={"titles": [], "notes": "", "social_snippets": []},
             status=EpisodeStatus.RESEARCH,
