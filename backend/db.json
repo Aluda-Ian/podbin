@@ -1,0 +1,331 @@
+{
+    "episodes": [
+        {
+            "title": "Agentic Future",
+            "guest": "Sam Altman",
+            "avatar": "guest1",
+            "stage": "Pre-Prod",
+            "status": "RESEARCH",
+            "duration": "\u2014",
+            "date": "Jun 26",
+            "progress": 40,
+            "note": "Transcription complete. Ready for edit.",
+            "raw_audio_url": "https://example.com/audio/podcast.mp3",
+            "transcript": "This is a placeholder transcript simulated by the transcription node.",
+            "generated_content": {
+                "titles": [
+                    "Default Episode Title"
+                ],
+                "notes": "Default show notes generated from the transcript.",
+                "social_snippets": [
+                    "Snippet 1 from the episode.",
+                    "Snippet 2 from the episode."
+                ]
+            },
+            "human_feedback": null,
+            "id": "EP-146"
+        },
+        {
+            "id": "EP-145",
+            "title": "Biohacking 2026",
+            "guest": "Dr. Lina Okafor",
+            "avatar": "guest2",
+            "stage": "Pre-Prod",
+            "status": "BOOKING",
+            "duration": "\u2014",
+            "date": "Jun 30",
+            "progress": 18,
+            "note": "Awaiting calendar confirmation",
+            "raw_audio_url": "https://example.com/audio/ep145.mp3"
+        },
+        {
+            "id": "EP-144",
+            "title": "The Future of LLMs",
+            "guest": "Andrej Karpathy",
+            "avatar": "guest1",
+            "stage": "Pre-Prod",
+            "status": "RESEARCH",
+            "duration": "\u2014",
+            "date": "Jun 28",
+            "progress": 40,
+            "note": "Mapping 18 mo. of public talks",
+            "raw_audio_url": "https://example.com/audio/ep144.mp3"
+        },
+        {
+            "id": "EP-143",
+            "title": "Synthetic Media Ethics",
+            "guest": "Marcus Cole",
+            "avatar": "guest2",
+            "stage": "Post-Prod",
+            "status": "EDITING",
+            "duration": "01:12:44",
+            "date": "Jun 25",
+            "progress": 72,
+            "note": "Cleaning noise floor \u2014 pass 2/3",
+            "raw_audio_url": "https://example.com/audio/ep143.mp3"
+        },
+        {
+            "id": "EP-142",
+            "title": "Scaling Creator Platforms",
+            "guest": "Jane Wu",
+            "avatar": "guest3",
+            "stage": "Post-Prod",
+            "status": "MASTERING",
+            "duration": "00:58:21",
+            "date": "Jun 22",
+            "progress": 91,
+            "note": "Loudness normalization \u221216 LUFS",
+            "raw_audio_url": "https://example.com/audio/ep142.mp3"
+        },
+        {
+            "id": "EP-141",
+            "title": "Silicon Valley Shifts",
+            "guest": "Patrick Hsu",
+            "avatar": "guest3",
+            "stage": "Growth",
+            "status": "DISTRO",
+            "duration": "01:04:09",
+            "date": "Jun 18",
+            "progress": 100,
+            "note": "Published to directories",
+            "bars": [
+                4,
+                6,
+                3,
+                5,
+                7,
+                5,
+                6
+            ],
+            "prediction": "Predicting 14.2k views in 48h",
+            "raw_audio_url": "https://example.com/audio/ep141.mp3"
+        },
+        {
+            "id": "EP-140",
+            "title": "Founder Burnout",
+            "guest": "Alex Rivers",
+            "avatar": "guest1",
+            "stage": "Growth",
+            "status": "LIVE",
+            "duration": "00:49:55",
+            "date": "Jun 14",
+            "progress": 100,
+            "note": "Trending #4 on Spotify Tech",
+            "bars": [
+                3,
+                5,
+                6,
+                4,
+                7,
+                8,
+                6
+            ],
+            "prediction": "Trending #4 on Spotify Tech",
+            "raw_audio_url": "https://example.com/audio/ep140.mp3"
+        },
+        {
+            "id": "EP-139",
+            "title": "The Climate Tech Pivot",
+            "guest": "Marcus Cole",
+            "avatar": "guest2",
+            "stage": "Growth",
+            "status": "LIVE",
+            "duration": "01:21:03",
+            "date": "Jun 10",
+            "progress": 100,
+            "note": "published",
+            "raw_audio_url": "https://example.com/audio/ep139.mp3"
+        },
+        {
+            "id": "EP-138",
+            "title": "Neural Interfaces 101",
+            "guest": "Andrej Karpathy",
+            "avatar": "guest1",
+            "stage": "Growth",
+            "status": "LIVE",
+            "duration": "00:55:12",
+            "date": "Jun 06",
+            "progress": 100,
+            "note": "published",
+            "raw_audio_url": "https://example.com/audio/ep138.mp3"
+        }
+    ],
+    "approvals": [
+        {
+            "id": "appr-935bf010",
+            "type": "SHOW_NOTES",
+            "title": "Markdown \u00b7 EP-146",
+            "quote": "Summary for Agentic Future: Transcription complete. Ready for edit.",
+            "meta": "Generated just now for Sam Altman",
+            "priority": "medium",
+            "agent": "Research Agent",
+            "status": "APPROVED"
+        },
+        {
+            "id": "appr-1",
+            "type": "CLIP_GENERATED",
+            "title": "Vertical 9:16 \u00b7 Ep. 142",
+            "quote": "\"We are essentially living inside a high-fidelity simulation of last year's consensus.\"",
+            "meta": "00:42 \u00b7 1080\u00d71920 \u00b7 Generated 4m ago",
+            "priority": "high",
+            "agent": "Repurpose Agent",
+            "status": "REJECTED"
+        },
+        {
+            "id": "appr-2",
+            "type": "SHOW_NOTES",
+            "title": "Markdown \u00b7 Ep. 141",
+            "quote": "Summary for Ep. 141: Exploring Neural Interfaces and the regulatory gap between research labs and consumer rollout...",
+            "meta": "1,240 words \u00b7 Generated 11m ago",
+            "priority": "medium",
+            "agent": "Research Agent",
+            "status": "REJECTED"
+        },
+        {
+            "id": "appr-3",
+            "type": "NEWSLETTER_DRAFT",
+            "title": "Weekly Recap \u00b7 Issue #41",
+            "quote": "This week we covered neural interfaces, climate tech, and the founder burnout epidemic. Top 3 takeaways inside.",
+            "meta": "12,400 subscribers \u00b7 Generated 32m ago",
+            "priority": "medium",
+            "agent": "Repurpose Agent",
+            "status": "REJECTED"
+        },
+        {
+            "id": "appr-4",
+            "type": "SOCIAL_THREAD",
+            "title": "X / Twitter \u00b7 7-post thread",
+            "quote": "\ud83e\uddf5 The single biggest myth about AGI timelines, dismantled by Andrej K. in 7 posts.",
+            "meta": "Engagement est. 4.2k \u00b7 Generated 1h ago",
+            "priority": "low",
+            "agent": "Distribution Agent",
+            "status": "PENDING"
+        },
+        {
+            "id": "appr-5",
+            "type": "GUEST_OUTREACH",
+            "title": "Email \u00b7 Dr. Lina Okafor",
+            "quote": "Hi Lina \u2014 loved your recent paper on metabolic markers. Would love to host you on PodBin for Ep. 145...",
+            "meta": "Tone: warm-professional \u00b7 Generated 2h ago",
+            "priority": "low",
+            "agent": "Booking Agent",
+            "status": "APPROVED"
+        }
+    ],
+    "agents": [
+        {
+            "name": "Research Agent",
+            "role": "Sources, talking points, fact-checking",
+            "status": "active",
+            "task": "Resumed work on task",
+            "tasksToday": 42,
+            "success": 98
+        },
+        {
+            "name": "Booking Agent",
+            "role": "Guest outreach and scheduling",
+            "status": "active",
+            "task": "Negotiating slot with Jane Wu",
+            "tasksToday": 8,
+            "success": 100
+        },
+        {
+            "name": "Production Agent",
+            "role": "Audio editing, mixing, mastering",
+            "status": "active",
+            "task": "Resumed work on task",
+            "tasksToday": 14,
+            "success": 96
+        },
+        {
+            "name": "Repurpose Agent",
+            "role": "Clip generation and snippet authoring",
+            "status": "active",
+            "task": "6 clips queued for review",
+            "tasksToday": 28,
+            "success": 92
+        },
+        {
+            "name": "Distribution Agent",
+            "role": "Multi-channel syndication",
+            "status": "idle",
+            "task": "Idle \u2014 last push 14m ago",
+            "tasksToday": 19,
+            "success": 100
+        }
+    ],
+    "settings": {
+        "workspaceName": "PodBin Enterprise",
+        "showName": "The Loverble Frontier",
+        "primaryHost": "Jordan Lee",
+        "releaseCadence": "Weekly \u00b7 Tuesdays 06:00 UTC",
+        "integrations": [
+            {
+                "name": "Spotify for Podcasters",
+                "status": "Connected",
+                "color": "text-success"
+            },
+            {
+                "name": "Apple Podcasts Connect",
+                "status": "Connected",
+                "color": "text-success"
+            },
+            {
+                "name": "YouTube Studio",
+                "status": "Connected",
+                "color": "text-success"
+            },
+            {
+                "name": "TikTok for Business",
+                "status": "Connected",
+                "color": "text-success"
+            },
+            {
+                "name": "X / Twitter",
+                "status": "Disconnected",
+                "color": "text-muted"
+            },
+            {
+                "name": "Substack",
+                "status": "Disconnected",
+                "color": "text-muted"
+            }
+        ],
+        "autonomyLevel": "Human-in-the-loop"
+    },
+    "users": [
+        {
+            "id": "user-1",
+            "name": "Alex Admin",
+            "email": "admin@podbin.com",
+            "role": "Super Admin",
+            "password": "password123",
+            "podcast_ids": [
+                "*"
+            ],
+            "suspended": false
+        },
+        {
+            "id": "user-2",
+            "name": "Jordan Lee",
+            "email": "owner@podbin.com",
+            "role": "Podcast Owner",
+            "password": "password123",
+            "podcast_ids": [
+                "podcast-1"
+            ],
+            "suspended": false
+        },
+        {
+            "id": "user-3",
+            "name": "Taylor Team",
+            "email": "member@podbin.com",
+            "role": "Team Member",
+            "password": "password123",
+            "podcast_ids": [
+                "podcast-1"
+            ],
+            "suspended": false
+        }
+    ]
+}

@@ -3,6 +3,12 @@ from typing import Dict, Any, Optional
 from typing_extensions import TypedDict
 
 class EpisodeStatus(str, Enum):
+    RESEARCH = "RESEARCH"
+    BOOKING = "BOOKING"
+    EDITING = "EDITING"
+    MASTERING = "MASTERING"
+    DISTRO = "DISTRO"
+    LIVE = "LIVE"
     DRAFT = "DRAFT"
     PENDING_REVIEW = "PENDING_REVIEW"
     SCHEDULED = "SCHEDULED"
