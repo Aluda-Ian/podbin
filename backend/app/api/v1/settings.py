@@ -1,16 +1,22 @@
 from fastapi import APIRouter
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from app.services.db import db
 from pydantic import BaseModel
 
 router = APIRouter()
 
+class IntegrationItem(BaseModel):
+    name: str
+    status: str
+    color: str
+
 class SettingsUpdate(BaseModel):
-    workspaceName: str = None
-    showName: str = None
-    primaryHost: str = None
-    releaseCadence: str = None
-    autonomyLevel: str = None
+    workspaceName: Optional[str] = None
+    showName: Optional[str] = None
+    primaryHost: Optional[str] = None
+    releaseCadence: Optional[str] = None
+    autonomyLevel: Optional[str] = None
+    integrations: Optional[List[IntegrationItem]] = None
 
 @router.get("/")
 async def get_settings():

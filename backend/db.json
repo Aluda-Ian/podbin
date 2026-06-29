@@ -282,8 +282,8 @@
             },
             {
                 "name": "X / Twitter",
-                "status": "Disconnected",
-                "color": "text-muted"
+                "status": "Connected",
+                "color": "text-success"
             },
             {
                 "name": "Substack",
