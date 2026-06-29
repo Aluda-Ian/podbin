@@ -23,30 +23,30 @@ class APIKeysPayload(BaseModel):
 
 @router.get("/users")
 async def get_users():
-    return db.get_users()
+    return await db.get_users()
 
 @router.put("/users/{user_id}/role")
 async def update_user_role(user_id: str, payload: UserUpdateRolePayload):
-    u = db.update_user_role(user_id, payload.role)
+    u = await db.update_user_role(user_id, payload.role)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     return u
 
 @router.put("/users/{user_id}/status")
 async def suspend_user(user_id: str, payload: UserSuspendPayload):
-    u = db.suspend_user(user_id, payload.suspended)
+    u = await db.suspend_user(user_id, payload.suspended)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     return u
 
 @router.post("/users/invite")
 async def invite_user(payload: InviteUserPayload):
-    u = db.invite_user(payload.name, payload.email, payload.role)
+    u = await db.invite_user(payload.name, payload.email, payload.role)
     return u
 
 @router.get("/api-keys")
 async def get_api_keys():
-    keys = db.get_api_keys()
+    keys = await db.get_api_keys()
     # Mask key values for security
     return {
         "deepgram": f"dg-...{keys['deepgram'][-4:]}" if keys.get("deepgram") else "",
@@ -64,9 +64,9 @@ async def update_api_keys(payload: APIKeysPayload):
     if payload.elevenlabs and not payload.elevenlabs.startswith("el-..."):
         upd["elevenlabs"] = payload.elevenlabs
     if upd:
-        return db.update_api_keys(upd)
-    return db.get_api_keys()
+        return await db.update_api_keys(upd)
+    return await db.get_api_keys()
 
 @router.get("/analytics")
 async def get_admin_analytics():
-    return db.get_admin_analytics()
+    return await db.get_admin_analytics()

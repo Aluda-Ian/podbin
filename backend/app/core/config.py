@@ -19,5 +19,6 @@ class Settings:
     
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     DEEPGRAM_API_KEY: str = os.getenv("DEEPGRAM_API_KEY", "")
+    IS_SANDBOX_MODE: bool = os.getenv("IS_SANDBOX_MODE", "True").lower() == "true"
 
 settings = Settings()

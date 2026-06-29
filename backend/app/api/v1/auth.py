@@ -6,7 +6,7 @@ router = APIRouter()
 
 @router.post("/login", response_model=TokenResponse)
 async def login(payload: LoginRequest):
-    users = db.get_users()
+    users = await db.get_users()
     for user in users:
         if user["email"] == payload.email:
             if user["password"] == payload.password:
@@ -38,7 +38,7 @@ async def get_me(token: str):
             detail="Invalid token format"
         )
     user_id = token.replace("mock-token-", "")
-    users = db.get_users()
+    users = await db.get_users()
     for user in users:
         if user["id"] == user_id:
             return UserResponse(

@@ -5,6 +5,8 @@ from app.agents.state import EpisodeState, EpisodeStatus
 from app.agents.graph import app_graph
 from app.models.episode import EpisodeResponse, Clip, DistributionChannel, SocialsSchedule
 from app.services.db import db
+from app.core.config import settings
+from app.services.distribution import publish_to_youtube, generate_spotify_rss
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -56,11 +58,11 @@ class EpisodeUpdate(BaseModel):
 
 @router.get("/", response_model=List[EpisodeResponse])
 async def get_episodes():
-    return db.get_episodes()
+    return await db.get_episodes()
 
 @router.get("/{episode_id}", response_model=EpisodeResponse)
 async def get_episode(episode_id: str):
-    ep = db.get_episode(episode_id)
+    ep = await db.get_episode(episode_id)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
     return ep
@@ -146,13 +148,13 @@ async def create_episode(
         print(f"LangGraph execution failed: {e}")
         # We proceed even if graph failed, just saving the basic structure
 
-    # Save to JSON database
-    added_ep = db.add_episode(new_ep)
+    # Save to SQL database
+    added_ep = await db.add_episode(new_ep)
     
     # Also seed a matching approval task!
     import uuid
     appr_id = f"appr-{str(uuid.uuid4())[:8]}"
-    db.data["approvals"].insert(0, {
+    await db.add_approval({
         "id": appr_id,
         "type": "SHOW_NOTES",
         "title": f"Markdown · {added_ep['id']}",
@@ -162,7 +164,6 @@ async def create_episode(
         "agent": "Research Agent",
         "status": "PENDING"
     })
-    db._save()
 
     return added_ep
 
@@ -183,14 +184,39 @@ async def ingest_episode(
 async def update_episode(episode_id: str, updates: EpisodeUpdate):
     # filter out None updates
     upd = {k: v for k, v in updates.dict().items() if v is not None}
-    ep = db.update_episode(episode_id, upd)
+    ep = await db.update_episode(episode_id, upd)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
     return ep
 
 @router.delete("/{episode_id}")
 async def delete_episode(episode_id: str):
-    success = db.delete_episode(episode_id)
+    success = await db.delete_episode(episode_id)
     if not success:
         raise HTTPException(status_code=404, detail="Episode not found")
     return {"message": f"Episode {episode_id} deleted successfully"}
+
+@router.post("/{episode_id}/publish")
+async def publish_episode(episode_id: str, platform: str = "YouTube"):
+    ep = await db.get_episode(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+        
+    if platform.lower() == "youtube":
+        res = publish_to_youtube(ep["title"], ep.get("raw_video_url") or "mock_path.mp4", "public")
+        channels = ep.get("distribution_channels") or []
+        for ch in channels:
+            if ch.get("name") == "YouTube Studio":
+                ch["status"] = "LIVE"
+        await db.update_episode(episode_id, {"distribution_channels": channels})
+        return res
+    elif platform.lower() == "spotify":
+        all_eps = await db.get_episodes()
+        rss_feed = generate_spotify_rss(all_eps)
+        return {
+            "status": "success",
+            "platform": "Spotify",
+            "rss_feed": rss_feed
+        }
+    else:
+        raise HTTPException(status_code=400, detail="Invalid platform selected for publish")

@@ -39,45 +39,6 @@
             "raw_audio_url": "https://example.com/audio/ep145.mp3"
         },
         {
-            "id": "EP-144",
-            "title": "The Future of LLMs",
-            "guest": "Andrej Karpathy",
-            "avatar": "guest1",
-            "stage": "Pre-Prod",
-            "status": "RESEARCH",
-            "duration": "\u2014",
-            "date": "Jun 28",
-            "progress": 40,
-            "note": "Mapping 18 mo. of public talks",
-            "raw_audio_url": "https://example.com/audio/ep144.mp3"
-        },
-        {
-            "id": "EP-143",
-            "title": "Synthetic Media Ethics",
-            "guest": "Marcus Cole",
-            "avatar": "guest2",
-            "stage": "Post-Prod",
-            "status": "EDITING",
-            "duration": "01:12:44",
-            "date": "Jun 25",
-            "progress": 72,
-            "note": "Cleaning noise floor \u2014 pass 2/3",
-            "raw_audio_url": "https://example.com/audio/ep143.mp3"
-        },
-        {
-            "id": "EP-142",
-            "title": "Scaling Creator Platforms",
-            "guest": "Jane Wu",
-            "avatar": "guest3",
-            "stage": "Post-Prod",
-            "status": "MASTERING",
-            "duration": "00:58:21",
-            "date": "Jun 22",
-            "progress": 91,
-            "note": "Loudness normalization \u221216 LUFS",
-            "raw_audio_url": "https://example.com/audio/ep142.mp3"
-        },
-        {
             "id": "EP-141",
             "title": "Silicon Valley Shifts",
             "guest": "Patrick Hsu",
@@ -122,32 +83,6 @@
             ],
             "prediction": "Trending #4 on Spotify Tech",
             "raw_audio_url": "https://example.com/audio/ep140.mp3"
-        },
-        {
-            "id": "EP-139",
-            "title": "The Climate Tech Pivot",
-            "guest": "Marcus Cole",
-            "avatar": "guest2",
-            "stage": "Growth",
-            "status": "LIVE",
-            "duration": "01:21:03",
-            "date": "Jun 10",
-            "progress": 100,
-            "note": "published",
-            "raw_audio_url": "https://example.com/audio/ep139.mp3"
-        },
-        {
-            "id": "EP-138",
-            "title": "Neural Interfaces 101",
-            "guest": "Andrej Karpathy",
-            "avatar": "guest1",
-            "stage": "Growth",
-            "status": "LIVE",
-            "duration": "00:55:12",
-            "date": "Jun 06",
-            "progress": 100,
-            "note": "published",
-            "raw_audio_url": "https://example.com/audio/ep138.mp3"
         }
     ],
     "approvals": [
@@ -282,28 +217,28 @@
             },
             {
                 "name": "TikTok for Business",
-                "status": "Disconnected",
-                "color": "text-muted"
+                "status": "Connected",
+                "color": "text-success"
             },
             {
                 "name": "X / Twitter",
-                "status": "Disconnected",
-                "color": "text-muted"
+                "status": "Connected",
+                "color": "text-success"
             },
             {
                 "name": "LinkedIn",
-                "status": "Disconnected",
-                "color": "text-muted"
+                "status": "Connected",
+                "color": "text-success"
             },
             {
                 "name": "Instagram",
-                "status": "Disconnected",
-                "color": "text-muted"
+                "status": "Connected",
+                "color": "text-success"
             },
             {
                 "name": "Facebook",
-                "status": "Disconnected",
-                "color": "text-muted"
+                "status": "Connected",
+                "color": "text-success"
             }
         ],
         "autonomyLevel": "Human-in-the-loop"

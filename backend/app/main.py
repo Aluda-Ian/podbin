@@ -1,5 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+from pathlib import Path
+
 from app.core.config import settings
 from app.api.v1.episodes import router as episodes_router
 from app.api.v1.agents import router as agents_router
@@ -7,11 +11,19 @@ from app.api.v1.approvals import router as approvals_router
 from app.api.v1.settings import router as settings_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.admin import router as admin_router
+from app.services.db import db
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize SQLAlchemy database schemas and seeds
+    await db.init_db()
+    yield
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Backend API for PodBin Podcast Automation platform",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS configuration
@@ -22,6 +34,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files folder dynamically for EDL edits
+static_dir = Path("static")
+static_dir.mkdir(exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Basic health-check endpoint
 @app.get("/health", status_code=200)
