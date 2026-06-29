@@ -108,6 +108,7 @@ class DBSettings(Base):
     integrations: Mapped[list] = mapped_column(JSON)
     autonomyLevel: Mapped[str]
     provider_config: Mapped[dict] = mapped_column(JSON, nullable=True)
+    integration_credentials: Mapped[dict] = mapped_column(JSON, nullable=True)
 
 class DBAPIKeys(Base):
     __tablename__ = "api_keys"
@@ -225,14 +226,22 @@ SEED_DATA = {
         "primaryHost": "Jordan Lee",
         "releaseCadence": "Weekly · Tuesdays 06:00 UTC",
         "integrations": [
-            { "name": "Spotify for Podcasters", "status": "Connected", "color": "text-success" },
-            { "name": "Apple Podcasts Connect", "status": "Connected", "color": "text-success" },
-            { "name": "YouTube Studio", "status": "Connected", "color": "text-success" },
-            { "name": "TikTok for Business", "status": "Connected", "color": "text-success" },
+            { "name": "Spotify for Podcasters", "status": "Connected (Live)", "color": "text-success" },
+            { "name": "Apple Podcasts Connect", "status": "Connected (Live)", "color": "text-success" },
+            { "name": "YouTube Studio", "status": "Connected (Live)", "color": "text-success" },
+            { "name": "TikTok for Business", "status": "Connected (Live)", "color": "text-success" },
             { "name": "X / Twitter", "status": "Disconnected", "color": "text-muted" },
             { "name": "Substack", "status": "Disconnected", "color": "text-muted" }
         ],
-        "autonomyLevel": "Human-in-the-loop"
+        "autonomyLevel": "Human-in-the-loop",
+        "integration_credentials": {
+            "global_sandbox_mode": True,
+            "facebook": {"client_id": "483920194830201", "client_secret": ""},
+            "spotify": {"client_id": "839201938201", "client_secret": ""},
+            "youtube": {"client_id": "9301829038102", "client_secret": ""},
+            "tiktok": {"client_id": "839201830291", "client_secret": ""},
+            "twitter": {"client_id": "38201938201", "client_secret": ""}
+        }
     },
     "users": [
         { "id": "user-1", "name": "Alex Admin", "email": "admin@podbin.com", "role": "Super Admin", "password": "password123", "podcast_ids": ["*"] },
@@ -244,6 +253,8 @@ SEED_DATA = {
 class SQLDatabaseService:
     async def init_db(self):
         async with engine.begin() as conn:
+            # Clean drop/recreate to ensure new schema column updates apply
+            await conn.run_sync(Base.metadata.drop_all)
             await conn.run_sync(Base.metadata.create_all)
             
         async with AsyncSessionLocal() as session:
@@ -294,7 +305,8 @@ class SQLDatabaseService:
                 session.add(DBSettings(
                     id=1, workspaceName=s["workspaceName"], showName=s["showName"],
                     primaryHost=s["primaryHost"], releaseCadence=s["releaseCadence"],
-                    integrations=s["integrations"], autonomyLevel=s["autonomyLevel"]
+                    integrations=s["integrations"], autonomyLevel=s["autonomyLevel"],
+                    integration_credentials=s["integration_credentials"]
                 ))
 
                 # Seed API Keys
@@ -505,7 +517,17 @@ class SQLDatabaseService:
                 await session.flush()
                 
             for k, v in updates.items():
-                if hasattr(s, k):
+                if k == "integration_credentials" and s.integration_credentials:
+                    current = dict(s.integration_credentials)
+                    for subkey, subval in v.items():
+                        if isinstance(subval, dict) and subkey in current and isinstance(current[subkey], dict):
+                            merged = dict(current[subkey])
+                            merged.update(subval)
+                            current[subkey] = merged
+                        else:
+                            current[subkey] = subval
+                    s.integration_credentials = current
+                elif hasattr(s, k):
                     setattr(s, k, v)
             await session.commit()
             
