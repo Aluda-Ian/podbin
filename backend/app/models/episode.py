@@ -46,6 +46,9 @@ class EpisodeResponse(BaseModel):
     clips: Optional[List[Clip]] = None
     distribution_channels: Optional[List[DistributionChannel]] = None
     socials_schedule: Optional[List[SocialsSchedule]] = None
+    word_timeline: Optional[List[Dict[str, Any]]] = None
+    edit_decision_list: Optional[List[Dict[str, Any]]] = None
+    selected_llm_config: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True

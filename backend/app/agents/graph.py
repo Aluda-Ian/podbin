@@ -9,14 +9,17 @@ def transcription_node(state: EpisodeState) -> EpisodeState:
     print("Executing transcription_node...")
     return {
         "raw_audio_url": state.get("raw_audio_url"),
-        "transcript": "This is a placeholder transcript simulated by the transcription node.",
+        "transcript": state.get("transcript") or "This is a placeholder transcript simulated by the transcription node.",
         "generated_content": {
             "titles": ["Default Episode Title"],
             "notes": "Default show notes generated from the transcript.",
             "social_snippets": ["Snippet 1 from the episode.", "Snippet 2 from the episode."]
         },
         "status": state.get("status"),
-        "human_feedback": state.get("human_feedback")
+        "human_feedback": state.get("human_feedback"),
+        "word_timeline": state.get("word_timeline") or [],
+        "edit_decision_list": state.get("edit_decision_list") or [],
+        "selected_llm_config": state.get("selected_llm_config") or {}
     }
 
 # Build workflow

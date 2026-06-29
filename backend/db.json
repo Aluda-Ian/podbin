@@ -276,17 +276,32 @@
                 "color": "text-success"
             },
             {
+                "name": "Substack",
+                "status": "Disconnected",
+                "color": "text-muted"
+            },
+            {
                 "name": "TikTok for Business",
-                "status": "Connected",
-                "color": "text-success"
+                "status": "Disconnected",
+                "color": "text-muted"
             },
             {
                 "name": "X / Twitter",
-                "status": "Connected",
-                "color": "text-success"
+                "status": "Disconnected",
+                "color": "text-muted"
             },
             {
-                "name": "Substack",
+                "name": "LinkedIn",
+                "status": "Disconnected",
+                "color": "text-muted"
+            },
+            {
+                "name": "Instagram",
+                "status": "Disconnected",
+                "color": "text-muted"
+            },
+            {
+                "name": "Facebook",
                 "status": "Disconnected",
                 "color": "text-muted"
             }
@@ -327,5 +342,10 @@
             ],
             "suspended": false
         }
-    ]
+    ],
+    "api_keys": {
+        "deepgram": "",
+        "openai": "",
+        "elevenlabs": ""
+    }
 }

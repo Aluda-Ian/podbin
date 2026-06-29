@@ -9,6 +9,29 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
+# Simulated Deepgram transcription pipeline requesting word-level timestamps
+async def run_deepgram_transcription_pipeline(audio_url: str, timestamps: bool = True) -> dict:
+    # If timestamps=True (or timestamps=true), it returns word-level timeline precision.
+    if not timestamps:
+        return {"transcript": "This is a transcript without word timeline.", "words": []}
+    
+    simulated_words = [
+        {"word": "Welcome", "start": 0.1, "end": 0.5, "id": "w1"},
+        {"word": "to", "start": 0.5, "end": 0.7, "id": "w2"},
+        {"word": "PodBin,", "start": 0.7, "end": 1.2, "id": "w3"},
+        {"word": "the", "start": 1.2, "end": 1.4, "id": "w4"},
+        {"word": "autonomous", "start": 1.4, "end": 2.1, "id": "w5"},
+        {"word": "podcast", "start": 2.1, "end": 2.6, "id": "w6"},
+        {"word": "editing", "start": 2.6, "end": 3.1, "id": "w7"},
+        {"word": "and", "start": 3.1, "end": 3.3, "id": "w8"},
+        {"word": "distribution", "start": 3.3, "end": 4.0, "id": "w9"},
+        {"word": "platform.", "start": 4.0, "end": 4.6, "id": "w10"}
+    ]
+    return {
+        "transcript": "Welcome to PodBin, the autonomous podcast editing and distribution platform.",
+        "words": simulated_words
+    }
+
 class EpisodeCreate(BaseModel):
     title: str
     guest: str
@@ -87,22 +110,36 @@ async def create_episode(
         "podcast_id": podcast_id or "podcast-1",
         "transcript": None,
         "generated_content": {"titles": [], "notes": "", "social_snippets": []},
-        "human_feedback": None
+        "human_feedback": None,
+        "word_timeline": [],
+        "edit_decision_list": [],
+        "selected_llm_config": {}
     }
 
     # Run LangGraph workflow (simulated or real)
     try:
+        # Request word-level timestamps (timestamps=True)
+        dg_res = await run_deepgram_transcription_pipeline(media_path_or_url, timestamps=True)
+        new_ep["transcript"] = dg_res["transcript"]
+        new_ep["word_timeline"] = dg_res["words"]
+
         initial_state = EpisodeState(
             raw_audio_url=media_path_or_url,
-            transcript=None,
+            transcript=dg_res["transcript"],
             generated_content={"titles": [], "notes": "", "social_snippets": []},
             status=EpisodeStatus.RESEARCH,
-            human_feedback=None
+            human_feedback=None,
+            word_timeline=dg_res["words"],
+            edit_decision_list=[],
+            selected_llm_config={}
         )
         graph_result = await app_graph.ainvoke(initial_state)
         # Update episode with graph execution results
         new_ep["transcript"] = graph_result.get("transcript")
         new_ep["generated_content"] = graph_result.get("generated_content")
+        new_ep["word_timeline"] = graph_result.get("word_timeline")
+        new_ep["edit_decision_list"] = graph_result.get("edit_decision_list")
+        new_ep["selected_llm_config"] = graph_result.get("selected_llm_config")
         new_ep["progress"] = 40
         new_ep["note"] = "Transcription complete. Ready for edit."
     except Exception as e:

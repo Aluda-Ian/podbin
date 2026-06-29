@@ -1,5 +1,16 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from enum import Enum
+
+class ProviderTier(str, Enum):
+    PLATFORM_FREE = "PLATFORM_FREE"
+    PLATFORM_PAID = "PLATFORM_PAID"
+    BYO_KEY = "BYO_KEY"
+
+class ProviderConfig(BaseModel):
+    tier: ProviderTier = ProviderTier.PLATFORM_FREE
+    custom_api_key: Optional[str] = None
+    custom_provider: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: str
@@ -7,6 +18,7 @@ class UserResponse(BaseModel):
     email: str
     role: str  # "Super Admin" | "Podcast Owner" | "Team Member"
     podcast_ids: List[str]
+    provider_config: Optional[ProviderConfig] = None
 
     class Config:
         from_attributes = True
