@@ -30,7 +30,17 @@ def decrypt_key(enc_key: str) -> str:
 # Locate the database file at the backend root directory
 backend_root = Path(__file__).resolve().parents[2]
 DB_PATH = backend_root / "podbin.db"
-DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
+
+# Use DATABASE_URL from environment (PostgreSQL for Docker) or fall back to SQLite
+RAW_DATABASE_URL = os.getenv("DATABASE_URL", "")
+if RAW_DATABASE_URL and "postgresql" in RAW_DATABASE_URL:
+    # Production: PostgreSQL via asyncpg
+    DATABASE_URL = RAW_DATABASE_URL
+    if not DATABASE_URL.startswith("postgresql+asyncpg"):
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+else:
+    # Local dev: SQLite
+    DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
@@ -317,6 +327,10 @@ class SQLDatabaseService:
                 await session.commit()
 
     def _ensure_defaults(self, ep: Dict[str, Any]):
+        if "status" not in ep or ep["status"] is None:
+            ep["status"] = "PENDING_REVIEW"
+        if "stage" not in ep or ep["stage"] is None:
+            ep["stage"] = "Pre-Prod"
         if "clips" not in ep or ep["clips"] is None:
             if ep.get("id") == "EP-143":
                 ep["clips"] = [

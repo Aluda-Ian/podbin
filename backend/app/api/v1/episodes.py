@@ -1,12 +1,14 @@
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException, status
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, status, Body
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+from pathlib import Path
 from app.agents.state import EpisodeState, EpisodeStatus
 from app.agents.graph import app_graph
 from app.models.episode import EpisodeResponse, Clip, DistributionChannel, SocialsSchedule
 from app.services.db import db
 from app.core.config import settings
 from app.services.distribution import publish_to_youtube, generate_spotify_rss
+from app.services.llm import generate_metadata
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -73,6 +75,7 @@ async def create_episode(
     guest: str = Form(...),
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
+    avatar: Optional[UploadFile] = File(None),
     podcast_id: Optional[str] = Form("podcast-1")
 ):
     # Determine audio/video source
@@ -94,12 +97,26 @@ async def create_episode(
             detail="Either a media file or a URL must be provided."
         )
 
+    # Save avatar if provided
+    avatar_url = None
+    if avatar:
+        avatars_dir = Path("static") / "avatars"
+        avatars_dir.mkdir(parents=True, exist_ok=True)
+        ext = Path(avatar.filename).suffix or ".jpg"
+        import secrets
+        avatar_filename = f"avatar_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}{ext}"
+        avatar_path = avatars_dir / avatar_filename
+        content = await avatar.read()
+        with open(str(avatar_path), "wb") as f:
+            f.write(content)
+        avatar_url = f"http://localhost:8000/static/avatars/{avatar_filename}"
+
     # Initialize episode data
     date_str = datetime.now().strftime("%b %d")
     new_ep = {
         "title": title,
         "guest": guest,
-        "avatar": "guest1",  # default avatar index
+        "avatar": avatar_url or "guest1",
         "stage": "Pre-Prod",
         "status": EpisodeStatus.RESEARCH,
         "duration": "—",
@@ -142,8 +159,10 @@ async def create_episode(
         new_ep["word_timeline"] = graph_result.get("word_timeline")
         new_ep["edit_decision_list"] = graph_result.get("edit_decision_list")
         new_ep["selected_llm_config"] = graph_result.get("selected_llm_config")
+        # Graph halts at PENDING_REVIEW — awaiting explicit user trigger
+        new_ep["status"] = EpisodeStatus.PENDING_REVIEW
         new_ep["progress"] = 40
-        new_ep["note"] = "Transcription complete. Ready for edit."
+        new_ep["note"] = "Transcription complete. Awaiting human review."
     except Exception as e:
         print(f"LangGraph execution failed: {e}")
         # We proceed even if graph failed, just saving the basic structure
@@ -196,6 +215,47 @@ async def delete_episode(episode_id: str):
         raise HTTPException(status_code=404, detail="Episode not found")
     return {"message": f"Episode {episode_id} deleted successfully"}
 
+@router.post("/{episode_id}/search-quote")
+async def search_quote(episode_id: str, payload: dict = Body(...)):
+    """Search for a quoted phrase in the episode word_timeline and return timestamps."""
+    ep = await db.get_episode(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    
+    quote = payload.get("quote", "").strip()
+    if not quote:
+        raise HTTPException(status_code=400, detail="Quote text is required")
+    
+    word_timeline = ep.get("word_timeline") or []
+    if not word_timeline:
+        raise HTTPException(status_code=404, detail="No word timeline available for this episode")
+    
+    import re
+    def normalize(w: str) -> str:
+        return re.sub(r"[^a-z0-9']", "", w.lower())
+    
+    search_words = [normalize(w) for w in quote.split()]
+    timeline_normalized = [normalize(w.get("word", "")) for w in word_timeline]
+    
+    for i in range(len(timeline_normalized) - len(search_words) + 1):
+        if timeline_normalized[i:i+len(search_words)] == search_words:
+            start_sec = word_timeline[i]["start"]
+            end_sec = word_timeline[i + len(search_words) - 1]["end"]
+            def fmt(sec):
+                m = int(sec // 60)
+                s = int(sec % 60)
+                return f"{m:02d}:{s:02d}"
+            return {
+                "found": True,
+                "start": fmt(start_sec),
+                "end": fmt(end_sec),
+                "start_seconds": start_sec,
+                "end_seconds": end_sec,
+                "matched_words": [w["word"] for w in word_timeline[i:i+len(search_words)]]
+            }
+    
+    return {"found": False, "message": "Quote not found in transcript timeline"}
+
 @router.post("/{episode_id}/publish")
 async def publish_episode(episode_id: str, platform: str = "YouTube"):
     ep = await db.get_episode(episode_id)
@@ -220,3 +280,16 @@ async def publish_episode(episode_id: str, platform: str = "YouTube"):
         }
     else:
         raise HTTPException(status_code=400, detail="Invalid platform selected for publish")
+
+@router.post("/{episode_id}/generate-metadata")
+async def generate_episode_metadata(episode_id: str):
+    ep = await db.get_episode(episode_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    transcript = ep.get("transcript")
+    if not transcript:
+        raise HTTPException(status_code=400, detail="No transcript available. Ensure transcription has completed.")
+
+    result = await generate_metadata(transcript)
+    return result

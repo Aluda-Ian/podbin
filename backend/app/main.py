@@ -11,6 +11,8 @@ from app.api.v1.approvals import router as approvals_router
 from app.api.v1.settings import router as settings_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.admin import router as admin_router
+from app.api.v1.distribution import router as distribution_router
+from app.api.v1.integrations import router as integrations_router
 from app.services.db import db
 
 @asynccontextmanager
@@ -55,3 +57,5 @@ app.include_router(approvals_router, prefix="/api/v1/approvals", tags=["approval
 app.include_router(settings_router, prefix="/api/v1/settings", tags=["settings"])
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(admin_router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(distribution_router, prefix="/api/v1/distribution", tags=["distribution"])
+app.include_router(integrations_router, prefix="/api/v1/integrations", tags=["integrations"])
