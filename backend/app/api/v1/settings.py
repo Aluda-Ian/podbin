@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi.responses import RedirectResponse
 from typing import Dict, Any, List, Optional
-from app.services.db import db
+from app.services.db import db, encrypt_key, decrypt_key
 from pydantic import BaseModel
 from app.models.user import ProviderConfig
 import urllib.parse
@@ -35,17 +35,23 @@ async def update_settings(payload: SettingsUpdate):
 @router.get("/provider-config", response_model=ProviderConfig)
 async def get_provider_config():
     settings = await db.get_settings()
-    # Mask or decrypt custom_api_key in secure operations if needed
-    config = settings.get("provider_config", {
+    config = settings.get("provider_config") or {
         "tier": "PLATFORM_FREE",
         "custom_api_key": None,
         "custom_provider": None
-    })
-    return config
+    }
+    # Make a copy to avoid mutating cache in place, then decrypt
+    config_dict = dict(config)
+    if config_dict.get("custom_api_key"):
+        config_dict["custom_api_key"] = decrypt_key(config_dict["custom_api_key"])
+    return config_dict
 
 @router.post("/provider-config", response_model=ProviderConfig)
 async def update_provider_config(payload: ProviderConfig):
-    await db.update_settings({"provider_config": payload.dict()})
+    config_dict = payload.dict()
+    if config_dict.get("custom_api_key"):
+        config_dict["custom_api_key"] = encrypt_key(config_dict["custom_api_key"])
+    await db.update_settings({"provider_config": config_dict})
     return payload
 
 @router.get("/connect/{platform}")

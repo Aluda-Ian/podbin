@@ -2,16 +2,20 @@ import json
 from typing import Dict, Any
 from openai import AsyncOpenAI
 from app.core.config import settings
-from app.services.db import db
+from app.services.db import db, decrypt_key
 from app.models.user import ProviderTier, ProviderConfig
 
 
 async def get_provider_config() -> ProviderConfig:
     settings_data = await db.get_settings()
     pc = settings_data.get("provider_config", {})
+    tier = pc.get("tier", ProviderTier.PLATFORM_FREE)
+    custom_api_key = pc.get("custom_api_key")
+    if tier == ProviderTier.BYO_KEY and custom_api_key:
+        custom_api_key = decrypt_key(custom_api_key)
     return ProviderConfig(
-        tier=pc.get("tier", ProviderTier.PLATFORM_FREE),
-        custom_api_key=pc.get("custom_api_key"),
+        tier=tier,
+        custom_api_key=custom_api_key,
         custom_provider=pc.get("custom_provider"),
     )
 

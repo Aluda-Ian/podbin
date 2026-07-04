@@ -1,21 +1,17 @@
 version: "3.9"
 
 services:
-  # PostgreSQL Database
+  # MongoDB Database
   db:
-    image: postgres:15-alpine
-    container_name: podbin_postgres
+    image: mongo:6.0
+    container_name: podbin_mongodb
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-podbin}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-podbin_secure_pass}
-      POSTGRES_DB: ${POSTGRES_DB:-podbin}
     ports:
-      - "5432:5432"
+      - "27017:27017"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mongodb_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-podbin}"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -28,7 +24,7 @@ services:
     container_name: podbin_backend
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-podbin}:${POSTGRES_PASSWORD:-podbin_secure_pass}@db:5432/${POSTGRES_DB:-podbin}
+      DATABASE_URL: mongodb://db:27017/podbin
       ENCRYPTION_SALT: ${ENCRYPTION_SALT:-podbin_secure_salt}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
@@ -68,5 +64,5 @@ services:
     command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
 
 volumes:
-  postgres_data:
+  mongodb_data:
   static_files:

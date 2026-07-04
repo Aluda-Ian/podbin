@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from beanie import Document
 from enum import Enum
 
 class ProviderTier(str, Enum):
@@ -45,3 +46,16 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+class User(Document):
+    id: str = Field(default=None)
+    name: str
+    email: str
+    role: str
+    password: str
+    podcast_ids: List[str]
+    suspended: bool = False
+    provider_config: Optional[ProviderConfig] = None
+
+    class Settings:
+        name = "users"

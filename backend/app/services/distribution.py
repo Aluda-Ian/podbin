@@ -3,17 +3,45 @@ from app.core.config import settings
 
 def publish_to_youtube(episode_title: str, video_path: str, privacy_status: str = "public") -> dict:
     selected_status = privacy_status
+    headers = {}
     if settings.IS_SANDBOX_MODE:
         selected_status = "private"
+        headers = {
+            "X-Sandbox-Enforced": "true",
+            "X-Sandbox-Override": "true"
+        }
         
     # Mocking YouTube API Uploading
-    print(f"[YouTube Upload] Sandbox: {settings.IS_SANDBOX_MODE}. Uploading {episode_title} with status: {selected_status}")
+    print(f"[YouTube Upload] Sandbox: {settings.IS_SANDBOX_MODE}. Uploading {episode_title} with status: {selected_status}. Headers: {headers}")
     return {
         "status": "success",
         "platform": "YouTube",
         "privacy_status": selected_status,
         "video_id": "mock-yt-12345",
-        "sandbox_enforced": settings.IS_SANDBOX_MODE
+        "sandbox_enforced": settings.IS_SANDBOX_MODE,
+        "headers": headers
+    }
+
+def publish_to_tiktok(episode_title: str, video_path: str, privacy_status: str = "public") -> dict:
+    selected_status = privacy_status
+    headers = {}
+    if settings.IS_SANDBOX_MODE:
+        selected_status = "private"
+        headers = {
+            "X-Sandbox-Enforced": "true",
+            "X-Sandbox-Override": "true",
+            "X-TikTok-Sandbox": "true"
+        }
+        
+    # Mocking TikTok API Uploading
+    print(f"[TikTok Upload] Sandbox: {settings.IS_SANDBOX_MODE}. Uploading {episode_title} with status: {selected_status}. Headers: {headers}")
+    return {
+        "status": "success",
+        "platform": "TikTok",
+        "privacy_status": selected_status,
+        "video_id": "mock-tiktok-12345",
+        "sandbox_enforced": settings.IS_SANDBOX_MODE,
+        "headers": headers
     }
 
 def generate_spotify_rss(episodes: list) -> str:

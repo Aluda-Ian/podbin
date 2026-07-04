@@ -3,7 +3,7 @@ from typing import List, Optional
 from datetime import datetime
 from app.services.db import db
 from app.core.config import settings
-from app.services.distribution import publish_to_youtube, generate_spotify_rss
+from app.services.distribution import publish_to_youtube, generate_spotify_rss, publish_to_tiktok
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -68,7 +68,20 @@ async def schedule_episode(episode_id: str, payload: ScheduleRequest = Body(...)
             else:
                 sandbox_notes.append(f"{platform}: Scheduled for live distribution")
 
-        elif plat in ("tiktok", "instagram", "twitter", "x", "linkedin", "facebook"):
+        elif plat == "tiktok":
+            actual_privacy = "private" if sandbox_enforced else (payload.privacy_status or "public")
+            res = publish_to_tiktok(
+                payload.title or ep.get("title", "Untitled"),
+                ep.get("raw_video_url") or "mock_path.mp4",
+                actual_privacy,
+            )
+            details[platform] = res
+            if sandbox_enforced:
+                sandbox_notes.append("TikTok: privacy forced to 'private' (sandbox mode)")
+            else:
+                sandbox_notes.append(f"TikTok: privacy set to '{actual_privacy}'")
+
+        elif plat in ("instagram", "twitter", "x", "linkedin", "facebook"):
             details[platform] = {"status": "scheduled", "platform": platform}
             if sandbox_enforced:
                 sandbox_notes.append(f"{platform}: Scheduled in sandbox — post will NOT go live")

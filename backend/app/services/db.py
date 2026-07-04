@@ -1,11 +1,14 @@
 import os
-import json
 import base64
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import select, Text, Boolean, Integer, JSON
+from urllib.parse import urlparse
+from beanie import Document, init_beanie
+from pydantic import Field
+from motor.motor_asyncio import AsyncIOMotorClient
+
+from app.models.user import User
+from app.models.episode import Episode
 
 # Secure key encryption helper
 ENCRYPTION_SALT = os.getenv("ENCRYPTION_SALT", "podbin_secure_salt")
@@ -27,105 +30,70 @@ def decrypt_key(enc_key: str) -> str:
     except Exception:
         return ""
 
-# Locate the database file at the backend root directory
-backend_root = Path(__file__).resolve().parents[2]
-DB_PATH = backend_root / "podbin.db"
+# Configure MongoDB connection from environment URL
+MONGODB_URL = os.getenv("MONGODB_URL", "")
+if not MONGODB_URL:
+    DATABASE_URL = os.getenv("DATABASE_URL", "")
+    if DATABASE_URL.startswith("mongodb"):
+        MONGODB_URL = DATABASE_URL
+    else:
+        MONGODB_URL = "mongodb://localhost:27017"
 
-# Use DATABASE_URL from environment (PostgreSQL for Docker) or fall back to SQLite
-RAW_DATABASE_URL = os.getenv("DATABASE_URL", "")
-if RAW_DATABASE_URL and "postgresql" in RAW_DATABASE_URL:
-    # Production: PostgreSQL via asyncpg
-    DATABASE_URL = RAW_DATABASE_URL
-    if not DATABASE_URL.startswith("postgresql+asyncpg"):
-        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-else:
-    # Local dev: SQLite
-    DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
+# Parse database name from the URL or fall back to "podbin"
+db_name = "podbin"
+parsed = urlparse(MONGODB_URL)
+if parsed.path and parsed.path != "/":
+    db_name = parsed.path.lstrip("/")
 
-engine = create_async_engine(DATABASE_URL, echo=False)
-AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False, class_=AsyncSession)
+# Define persistent Beanie Documents for internal tables
+class Approval(Document):
+    id: str = Field(default=None)
+    podcast_id: str
+    type: str
+    title: str
+    quote: str
+    meta: str
+    priority: str
+    agent: str
+    status: str
 
-class Base(DeclarativeBase):
-    pass
+    class Settings:
+        name = "approvals"
 
-class DBUser(Base):
-    __tablename__ = "users"
-    id: Mapped[str] = mapped_column(primary_key=True)
-    name: Mapped[str]
-    email: Mapped[str] = mapped_column(unique=True)
-    role: Mapped[str]
-    password: Mapped[str]
-    podcast_ids: Mapped[list] = mapped_column(JSON)
-    suspended: Mapped[bool] = mapped_column(default=False)
-    provider_config: Mapped[dict] = mapped_column(JSON, nullable=True)
+class Agent(Document):
+    id: str = Field(default=None)  # Stored as the agent's name
+    name: str  # Kept for backend/frontend mapping and compatibility
+    role: str
+    status: str
+    task: str
+    tasksToday: int
+    success: int
 
-class DBEpisode(Base):
-    __tablename__ = "episodes"
-    id: Mapped[str] = mapped_column(primary_key=True)
-    title: Mapped[str]
-    guest: Mapped[str]
-    avatar: Mapped[str]
-    stage: Mapped[str]
-    duration: Mapped[str]
-    date: Mapped[str]
-    progress: Mapped[int] = mapped_column(default=0)
-    note: Mapped[str]
-    bars: Mapped[list] = mapped_column(JSON, nullable=True)
-    prediction: Mapped[str] = mapped_column(nullable=True)
-    raw_audio_url: Mapped[str] = mapped_column(nullable=True)
-    raw_video_url: Mapped[str] = mapped_column(nullable=True)
-    media_type: Mapped[str] = mapped_column(default="audio")
-    podcast_id: Mapped[str] = mapped_column(default="podcast-1")
-    transcript: Mapped[str] = mapped_column(Text, nullable=True)
-    generated_content: Mapped[dict] = mapped_column(JSON, default=dict)
-    status: Mapped[str]
-    human_feedback: Mapped[str] = mapped_column(nullable=True)
-    clips: Mapped[list] = mapped_column(JSON, default=list)
-    distribution_channels: Mapped[list] = mapped_column(JSON, default=list)
-    socials_schedule: Mapped[list] = mapped_column(JSON, default=list)
-    word_timeline: Mapped[list] = mapped_column(JSON, default=list)
-    edit_decision_list: Mapped[list] = mapped_column(JSON, default=list)
-    selected_llm_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    class Settings:
+        name = "agents"
 
-class DBApproval(Base):
-    __tablename__ = "approvals"
-    id: Mapped[str] = mapped_column(primary_key=True)
-    podcast_id: Mapped[str]
-    type: Mapped[str]
-    title: Mapped[str]
-    quote: Mapped[str]
-    meta: Mapped[str]
-    priority: Mapped[str]
-    agent: Mapped[str]
-    status: Mapped[str]
+class SettingsDocument(Document):
+    id: str = Field(default="1")
+    workspaceName: str
+    showName: str
+    primaryHost: str
+    releaseCadence: str
+    integrations: List[Dict[str, Any]]
+    autonomyLevel: str
+    provider_config: Optional[Dict[str, Any]] = None
+    integration_credentials: Optional[Dict[str, Any]] = None
 
-class DBAgent(Base):
-    __tablename__ = "agents"
-    name: Mapped[str] = mapped_column(primary_key=True)
-    role: Mapped[str]
-    status: Mapped[str]
-    task: Mapped[str]
-    tasksToday: Mapped[int]
-    success: Mapped[int]
+    class Settings:
+        name = "settings"
 
-class DBSettings(Base):
-    __tablename__ = "settings"
-    id: Mapped[int] = mapped_column(primary_key=True, default=1)
-    workspaceName: Mapped[str]
-    showName: Mapped[str]
-    primaryHost: Mapped[str]
-    releaseCadence: Mapped[str]
-    integrations: Mapped[list] = mapped_column(JSON)
-    autonomyLevel: Mapped[str]
-    provider_config: Mapped[dict] = mapped_column(JSON, nullable=True)
-    integration_credentials: Mapped[dict] = mapped_column(JSON, nullable=True)
+class APIKeysDocument(Document):
+    id: str = Field(default="1")
+    deepgram: str
+    openai: str
+    elevenlabs: str
 
-class DBAPIKeys(Base):
-    __tablename__ = "api_keys"
-    id: Mapped[int] = mapped_column(primary_key=True, default=1)
-    deepgram: Mapped[str]
-    openai: Mapped[str]
-    elevenlabs: Mapped[str]
+    class Settings:
+        name = "api_keys"
 
 
 SEED_DATA = {
@@ -260,71 +228,76 @@ SEED_DATA = {
     ]
 }
 
-class SQLDatabaseService:
+class BeanieDatabaseService:
+    def __init__(self):
+        self.client = None
+
     async def init_db(self):
-        async with engine.begin() as conn:
-            # Clean drop/recreate to ensure new schema column updates apply
-            await conn.run_sync(Base.metadata.drop_all)
-            await conn.run_sync(Base.metadata.create_all)
-            
-        async with AsyncSessionLocal() as session:
-            # Seed users
-            res = await session.execute(select(DBUser))
-            if not res.scalars().first():
-                for u in SEED_DATA["users"]:
-                    session.add(DBUser(
-                        id=u["id"], name=u["name"], email=u["email"],
-                        role=u["role"], password=u["password"],
-                        podcast_ids=u["podcast_ids"], suspended=False,
-                        provider_config=None
-                    ))
-                
-                # Seed episodes
-                for ep in SEED_DATA["episodes"]:
-                    session.add(DBEpisode(
-                        id=ep["id"], title=ep["title"], guest=ep["guest"],
-                        avatar=ep["avatar"], stage=ep["stage"], status=ep["status"],
-                        duration=ep["duration"], date=ep["date"], progress=ep["progress"],
-                        note=ep["note"], bars=ep.get("bars", []), prediction=ep.get("prediction"),
-                        raw_audio_url=ep.get("raw_audio_url"), raw_video_url=ep.get("raw_video_url"),
-                        media_type=ep.get("media_type", "audio"), podcast_id=ep.get("podcast_id", "podcast-1"),
-                        transcript=ep.get("transcript"), generated_content=ep.get("generated_content", {}),
-                        human_feedback=ep.get("human_feedback"), clips=ep.get("clips", []),
-                        distribution_channels=ep.get("distribution_channels", []),
-                        socials_schedule=ep.get("socials_schedule", []), word_timeline=ep.get("word_timeline", []),
-                        edit_decision_list=ep.get("edit_decision_list", []), selected_llm_config=ep.get("selected_llm_config", {})
-                    ))
+        self.client = AsyncIOMotorClient(MONGODB_URL)
+        await init_beanie(
+            database=self.client[db_name],
+            document_models=[
+                User,
+                Episode,
+                Approval,
+                Agent,
+                SettingsDocument,
+                APIKeysDocument
+            ]
+        )
+        
+        # Only seed the database if it has not been initialized yet
+        if await SettingsDocument.count() > 0:
+            return
+        
+        for u in SEED_DATA["users"]:
+            await User(
+                id=u["id"], name=u["name"], email=u["email"],
+                role=u["role"], password=u["password"],
+                podcast_ids=u["podcast_ids"], suspended=False,
+                provider_config=None
+            ).insert()
+        
+        for ep in SEED_DATA["episodes"]:
+            db_ep = Episode(
+                id=ep["id"], title=ep["title"], guest=ep["guest"],
+                avatar=ep["avatar"], stage=ep["stage"], status=ep["status"],
+                duration=ep["duration"], date=ep["date"], progress=ep["progress"],
+                note=ep["note"], bars=ep.get("bars", []), prediction=ep.get("prediction"),
+                raw_audio_url=ep.get("raw_audio_url"), raw_video_url=ep.get("raw_video_url"),
+                media_type=ep.get("media_type", "audio"), podcast_id=ep.get("podcast_id", "podcast-1"),
+                transcript=ep.get("transcript"), generated_content=ep.get("generated_content", {}),
+                human_feedback=ep.get("human_feedback"), clips=ep.get("clips", []),
+                distribution_channels=ep.get("distribution_channels", []),
+                socials_schedule=ep.get("socials_schedule", []), word_timeline=ep.get("word_timeline", []),
+                edit_decision_list=ep.get("edit_decision_list", []), selected_llm_config=ep.get("selected_llm_config", {})
+            )
+            await db_ep.insert()
 
-                # Seed approvals
-                for appr in SEED_DATA["approvals"]:
-                    session.add(DBApproval(
-                        id=appr["id"], podcast_id=appr["podcast_id"], type=appr["type"],
-                        title=appr["title"], quote=appr["quote"], meta=appr["meta"],
-                        priority=appr["priority"], agent=appr["agent"], status=appr["status"]
-                    ))
+        for appr in SEED_DATA["approvals"]:
+            await Approval(
+                id=appr["id"], podcast_id=appr["podcast_id"], type=appr["type"],
+                title=appr["title"], quote=appr["quote"], meta=appr["meta"],
+                priority=appr["priority"], agent=appr["agent"], status=appr["status"]
+            ).insert()
 
-                # Seed agents
-                for ag in SEED_DATA["agents"]:
-                    session.add(DBAgent(
-                        name=ag["name"], role=ag["role"], status=ag["status"],
-                        task=ag["task"], tasksToday=ag["tasksToday"], success=ag["success"]
-                    ))
+        for ag in SEED_DATA["agents"]:
+            await Agent(
+                id=ag["name"], name=ag["name"], role=ag["role"], status=ag["status"],
+                task=ag["task"], tasksToday=ag["tasksToday"], success=ag["success"]
+            ).insert()
 
-                # Seed settings
-                s = SEED_DATA["settings"]
-                session.add(DBSettings(
-                    id=1, workspaceName=s["workspaceName"], showName=s["showName"],
-                    primaryHost=s["primaryHost"], releaseCadence=s["releaseCadence"],
-                    integrations=s["integrations"], autonomyLevel=s["autonomyLevel"],
-                    integration_credentials=s["integration_credentials"]
-                ))
+        s = SEED_DATA["settings"]
+        await SettingsDocument(
+            id="1", workspaceName=s["workspaceName"], showName=s["showName"],
+            primaryHost=s["primaryHost"], releaseCadence=s["releaseCadence"],
+            integrations=s["integrations"], autonomyLevel=s["autonomyLevel"],
+            integration_credentials=s["integration_credentials"]
+        ).insert()
 
-                # Seed API Keys
-                session.add(DBAPIKeys(
-                    id=1, deepgram="", openai="", elevenlabs=""
-                ))
-                
-                await session.commit()
+        await APIKeysDocument(
+            id="1", deepgram="", openai="", elevenlabs=""
+        ).insert()
 
     def _ensure_defaults(self, ep: Dict[str, Any]):
         if "status" not in ep or ep["status"] is None:
@@ -359,295 +332,241 @@ class SQLDatabaseService:
 
     # Episodes operations
     async def get_episodes(self) -> List[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBEpisode))
-            episodes = res.scalars().all()
-            out = []
-            for ep in episodes:
-                ep_dict = {c.name: getattr(ep, c.name) for c in ep.__table__.columns}
-                self._ensure_defaults(ep_dict)
-                out.append(ep_dict)
-            return out
+        episodes = await Episode.find_all().to_list()
+        out = []
+        for ep in episodes:
+            ep_dict = ep.model_dump()
+            ep_dict["id"] = ep.id
+            self._ensure_defaults(ep_dict)
+            out.append(ep_dict)
+        return out
 
     async def get_episode(self, episode_id: str) -> Optional[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBEpisode).where(DBEpisode.id == episode_id))
-            ep = res.scalars().first()
-            if not ep:
-                return None
-            ep_dict = {c.name: getattr(ep, c.name) for c in ep.__table__.columns}
-            self._ensure_defaults(ep_dict)
-            return ep_dict
+        ep = await Episode.get(episode_id)
+        if not ep:
+            return None
+        ep_dict = ep.model_dump()
+        ep_dict["id"] = ep.id
+        self._ensure_defaults(ep_dict)
+        return ep_dict
 
     async def add_episode(self, episode: Dict[str, Any]) -> Dict[str, Any]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBEpisode))
-            episodes = res.scalars().all()
+        if not episode.get("id"):
+            all_eps = await Episode.find_all().to_list()
             existing_ids = []
-            for ep in episodes:
+            for ep in all_eps:
                 try:
                     num = int(ep.id.split("-")[1])
                     existing_ids.append(num)
                 except Exception:
                     pass
             next_num = max(existing_ids) + 1 if existing_ids else 1
-            ep_id = f"EP-{next_num}"
-            episode["id"] = ep_id
-            
-            self._ensure_defaults(episode)
-            
-            db_ep = DBEpisode(
-                id=episode["id"], title=episode["title"], guest=episode["guest"],
-                avatar=episode.get("avatar", "guest1"), stage=episode.get("stage", "Pre-Prod"),
-                status=episode.get("status", "RESEARCH"), duration=episode.get("duration", "—"),
-                date=episode.get("date"), progress=episode.get("progress", 20), note=episode.get("note", "Ingested"),
-                bars=episode.get("bars", []), prediction=episode.get("prediction"),
-                raw_audio_url=episode.get("raw_audio_url"), raw_video_url=episode.get("raw_video_url"),
-                media_type=episode.get("media_type", "audio"), podcast_id=episode.get("podcast_id", "podcast-1"),
-                transcript=episode.get("transcript"), generated_content=episode.get("generated_content", {}),
-                human_feedback=episode.get("human_feedback"), clips=episode.get("clips", []),
-                distribution_channels=episode.get("distribution_channels", []),
-                socials_schedule=episode.get("socials_schedule", []), word_timeline=episode.get("word_timeline", []),
-                edit_decision_list=episode.get("edit_decision_list", []), selected_llm_config=episode.get("selected_llm_config", {})
-            )
-            session.add(db_ep)
-            await session.commit()
-            return episode
+            episode["id"] = f"EP-{next_num}"
+        
+        self._ensure_defaults(episode)
+        db_ep = Episode(**episode)
+        await db_ep.insert()
+        return episode
 
     async def update_episode(self, episode_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBEpisode).where(DBEpisode.id == episode_id))
-            db_ep = res.scalars().first()
-            if not db_ep:
-                return None
-            for k, v in updates.items():
-                if hasattr(db_ep, k):
-                    setattr(db_ep, k, v)
-            await session.commit()
-            
-            res = await session.execute(select(DBEpisode).where(DBEpisode.id == episode_id))
-            fresh = res.scalars().first()
-            ep_dict = {c.name: getattr(fresh, c.name) for c in fresh.__table__.columns}
-            self._ensure_defaults(ep_dict)
-            return ep_dict
+        ep = await Episode.get(episode_id)
+        if not ep:
+            return None
+        for k, v in updates.items():
+            if hasattr(ep, k):
+                setattr(ep, k, v)
+        await ep.save()
+        ep_dict = ep.model_dump()
+        ep_dict["id"] = ep.id
+        self._ensure_defaults(ep_dict)
+        return ep_dict
 
     async def delete_episode(self, episode_id: str) -> bool:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBEpisode).where(DBEpisode.id == episode_id))
-            db_ep = res.scalars().first()
-            if not db_ep:
-                return False
-            await session.delete(db_ep)
-            await session.commit()
-            return True
+        ep = await Episode.get(episode_id)
+        if not ep:
+            return False
+        await ep.delete()
+        return True
 
     # Approvals operations
     async def get_approvals(self) -> List[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBApproval).where(DBApproval.status == "PENDING"))
-            approvals = res.scalars().all()
-            return [{c.name: getattr(appr, c.name) for c in appr.__table__.columns} for appr in approvals]
+        approvals = await Approval.find(Approval.status == "PENDING").to_list()
+        return [{"id": appr.id, **appr.model_dump()} for appr in approvals]
 
     async def action_approval(self, approval_id: str, action: str, updated_content: str = None) -> Optional[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBApproval).where(DBApproval.id == approval_id))
-            appr = res.scalars().first()
-            if not appr:
-                return None
+        appr = await Approval.get(approval_id)
+        if not appr:
+            return None
+        
+        if action == "approve":
+            appr.status = "APPROVED"
+        elif action == "reject":
+            appr.status = "REJECTED"
+        elif action == "edit" and updated_content is not None:
+            appr.quote = updated_content
             
-            if action == "approve":
-                appr.status = "APPROVED"
-            elif action == "reject":
-                appr.status = "REJECTED"
-            elif action == "edit" and updated_content is not None:
-                appr.quote = updated_content
-                
-            await session.commit()
-            
-            res = await session.execute(select(DBApproval).where(DBApproval.id == approval_id))
-            fresh = res.scalars().first()
-            return {c.name: getattr(fresh, c.name) for c in fresh.__table__.columns}
+        await appr.save()
+        return {"id": appr.id, **appr.model_dump()}
 
     async def add_approval(self, appr_dict: Dict[str, Any]) -> Dict[str, Any]:
-        async with AsyncSessionLocal() as session:
-            db_appr = DBApproval(
-                id=appr_dict["id"],
-                podcast_id=appr_dict.get("podcast_id", "podcast-1"),
-                type=appr_dict["type"],
-                title=appr_dict["title"],
-                quote=appr_dict["quote"],
-                meta=appr_dict["meta"],
-                priority=appr_dict.get("priority", "medium"),
-                agent=appr_dict.get("agent", "System"),
-                status=appr_dict.get("status", "PENDING")
-            )
-            session.add(db_appr)
-            await session.commit()
-            return appr_dict
+        db_appr = Approval(
+            id=appr_dict["id"],
+            podcast_id=appr_dict.get("podcast_id", "podcast-1"),
+            type=appr_dict["type"],
+            title=appr_dict["title"],
+            quote=appr_dict["quote"],
+            meta=appr_dict["meta"],
+            priority=appr_dict.get("priority", "medium"),
+            agent=appr_dict.get("agent", "System"),
+            status=appr_dict.get("status", "PENDING")
+        )
+        await db_appr.insert()
+        return appr_dict
 
     # Agents operations
     async def get_agents(self) -> List[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBAgent))
-            agents = res.scalars().all()
-            return [{c.name: getattr(ag, c.name) for c in ag.__table__.columns} for ag in agents]
+        agents = await Agent.find_all().to_list()
+        return [{
+            "name": ag.id,
+            "role": ag.role,
+            "status": ag.status,
+            "task": ag.task,
+            "tasksToday": ag.tasksToday,
+            "success": ag.success
+        } for ag in agents]
 
     async def toggle_agent(self, name: str) -> Optional[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBAgent).where(DBAgent.name.ilike(name)))
-            ag = res.scalars().first()
-            if not ag:
-                return None
-            
-            current_status = ag.status
-            new_status = "idle" if current_status == "active" else "active"
-            ag.status = new_status
-            ag.task = "Idle" if new_status == "idle" else "Resumed work on task"
-            
-            await session.commit()
-            
-            res = await session.execute(select(DBAgent).where(DBAgent.name.ilike(name)))
-            fresh = res.scalars().first()
-            return {c.name: getattr(fresh, c.name) for c in fresh.__table__.columns}
+        ag = await Agent.get(name)
+        if not ag:
+            agents = await Agent.find_all().to_list()
+            for a in agents:
+                if a.id.lower() == name.lower():
+                    ag = a
+                    break
+        if not ag:
+            return None
+        
+        current_status = ag.status
+        new_status = "idle" if current_status == "active" else "active"
+        ag.status = new_status
+        ag.task = "Idle" if new_status == "idle" else "Resumed work on task"
+        await ag.save()
+        
+        return {
+            "name": ag.id,
+            "role": ag.role,
+            "status": ag.status,
+            "task": ag.task,
+            "tasksToday": ag.tasksToday,
+            "success": ag.success
+        }
 
     # Settings operations
     async def get_settings(self) -> Dict[str, Any]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBSettings).where(DBSettings.id == 1))
-            s = res.scalars().first()
-            if not s:
-                return {}
-            return {c.name: getattr(s, c.name) for c in s.__table__.columns if c.name != "id"}
+        s = await SettingsDocument.get("1")
+        if not s:
+            return {}
+        return s.model_dump(exclude={"id"})
 
     async def update_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBSettings).where(DBSettings.id == 1))
-            s = res.scalars().first()
-            if not s:
-                s = DBSettings(id=1, workspaceName="PodBin Studio", showName="The Lovable Frontier",
-                               primaryHost="Jordan Lee", releaseCadence="Weekly", integrations=[],
-                               autonomyLevel="Human-in-the-loop")
-                session.add(s)
-                await session.flush()
-                
-            for k, v in updates.items():
-                if k == "integration_credentials" and s.integration_credentials:
-                    current = dict(s.integration_credentials)
-                    for subkey, subval in v.items():
-                        if isinstance(subval, dict) and subkey in current and isinstance(current[subkey], dict):
-                            merged = dict(current[subkey])
-                            merged.update(subval)
-                            current[subkey] = merged
-                        else:
-                            current[subkey] = subval
-                    s.integration_credentials = current
-                elif hasattr(s, k):
-                    setattr(s, k, v)
-            await session.commit()
+        s = await SettingsDocument.get("1")
+        if not s:
+            s = SettingsDocument(
+                id="1", workspaceName="PodBin Studio", showName="The Lovable Frontier",
+                primaryHost="Jordan Lee", releaseCadence="Weekly", integrations=[],
+                autonomyLevel="Human-in-the-loop"
+            )
+            await s.insert()
             
-            res = await session.execute(select(DBSettings).where(DBSettings.id == 1))
-            fresh = res.scalars().first()
-            return {c.name: getattr(fresh, c.name) for c in fresh.__table__.columns if c.name != "id"}
+        for k, v in updates.items():
+            if k == "integration_credentials" and s.integration_credentials:
+                current = dict(s.integration_credentials)
+                for subkey, subval in v.items():
+                    if isinstance(subval, dict) and subkey in current and isinstance(current[subkey], dict):
+                        merged = dict(current[subkey])
+                        merged.update(subval)
+                        current[subkey] = merged
+                    else:
+                        current[subkey] = subval
+                s.integration_credentials = current
+            elif hasattr(s, k):
+                setattr(s, k, v)
+        await s.save()
+        return s.model_dump(exclude={"id"})
 
     # Users operations
     async def get_users(self) -> List[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBUser))
-            users = res.scalars().all()
-            return [{c.name: getattr(u, c.name) for c in u.__table__.columns} for u in users]
+        users = await User.find_all().to_list()
+        return [{"id": u.id, **u.model_dump()} for u in users]
 
     async def update_user_role(self, user_id: str, role: str) -> Optional[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBUser).where(DBUser.id == user_id))
-            u = res.scalars().first()
-            if not u:
-                return None
-            u.role = role
-            await session.commit()
-            
-            res = await session.execute(select(DBUser).where(DBUser.id == user_id))
-            fresh = res.scalars().first()
-            return {c.name: getattr(fresh, c.name) for c in fresh.__table__.columns}
+        u = await User.get(user_id)
+        if not u:
+            return None
+        u.role = role
+        await u.save()
+        return {"id": u.id, **u.model_dump()}
 
     async def suspend_user(self, user_id: str, suspended: bool) -> Optional[Dict[str, Any]]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBUser).where(DBUser.id == user_id))
-            u = res.scalars().first()
-            if not u:
-                return None
-            u.suspended = suspended
-            await session.commit()
-            
-            res = await session.execute(select(DBUser).where(DBUser.id == user_id))
-            fresh = res.scalars().first()
-            return {c.name: getattr(fresh, c.name) for c in fresh.__table__.columns}
+        u = await User.get(user_id)
+        if not u:
+            return None
+        u.suspended = suspended
+        await u.save()
+        return {"id": u.id, **u.model_dump()}
 
     async def invite_user(self, name: str, email: str, role: str) -> Dict[str, Any]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBUser).where(DBUser.email == email))
-            u = res.scalars().first()
-            if u:
-                return {c.name: getattr(u, c.name) for c in u.__table__.columns}
-                
-            res_all = await session.execute(select(DBUser))
-            all_users = res_all.scalars().all()
-            new_id = f"user-{len(all_users) + 1}"
-            new_user = DBUser(
-                id=new_id,
-                name=name,
-                email=email,
-                role=role,
-                password="password123",
-                podcast_ids=["podcast-1"],
-                suspended=False
-            )
-            session.add(new_user)
-            await session.commit()
+        u = await User.find_one(User.email == email)
+        if u:
+            return {"id": u.id, **u.model_dump()}
             
-            res = await session.execute(select(DBUser).where(DBUser.id == new_id))
-            fresh = res.scalars().first()
-            return {c.name: getattr(fresh, c.name) for c in fresh.__table__.columns}
+        all_users = await User.find_all().to_list()
+        new_id = f"user-{len(all_users) + 1}"
+        new_user = User(
+            id=new_id,
+            name=name,
+            email=email,
+            role=role,
+            password="password123",
+            podcast_ids=["podcast-1"],
+            suspended=False
+        )
+        await new_user.insert()
+        return {"id": new_user.id, **new_user.model_dump()}
 
     # API Keys Operations
     async def get_api_keys(self) -> Dict[str, str]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBAPIKeys).where(DBAPIKeys.id == 1))
-            keys = res.scalars().first()
-            if not keys:
-                keys = DBAPIKeys(id=1, deepgram="", openai="", elevenlabs="")
-                session.add(keys)
-                await session.commit()
-                return {"deepgram": "", "openai": "", "elevenlabs": ""}
-            
-            return {
-                "deepgram": decrypt_key(keys.deepgram),
-                "openai": decrypt_key(keys.openai),
-                "elevenlabs": decrypt_key(keys.elevenlabs)
-            }
+        keys = await APIKeysDocument.get("1")
+        if not keys:
+            keys = APIKeysDocument(id="1", deepgram="", openai="", elevenlabs="")
+            await keys.insert()
+            return {"deepgram": "", "openai": "", "elevenlabs": ""}
+        
+        return {
+            "deepgram": decrypt_key(keys.deepgram),
+            "openai": decrypt_key(keys.openai),
+            "elevenlabs": decrypt_key(keys.elevenlabs)
+        }
 
     async def update_api_keys(self, keys_dict: Dict[str, str]) -> Dict[str, str]:
-        async with AsyncSessionLocal() as session:
-            res = await session.execute(select(DBAPIKeys).where(DBAPIKeys.id == 1))
-            keys = res.scalars().first()
-            if not keys:
-                keys = DBAPIKeys(id=1, deepgram="", openai="", elevenlabs="")
-                session.add(keys)
-                await session.flush()
-                
-            if "deepgram" in keys_dict:
-                keys.deepgram = encrypt_key(keys_dict["deepgram"])
-            if "openai" in keys_dict:
-                keys.openai = encrypt_key(keys_dict["openai"])
-            if "elevenlabs" in keys_dict:
-                keys.elevenlabs = encrypt_key(keys_dict["elevenlabs"])
-                
-            await session.commit()
+        keys = await APIKeysDocument.get("1")
+        if not keys:
+            keys = APIKeysDocument(id="1", deepgram="", openai="", elevenlabs="")
+            await keys.insert()
             
-            return {
-                "deepgram": decrypt_key(keys.deepgram),
-                "openai": decrypt_key(keys.openai),
-                "elevenlabs": decrypt_key(keys.elevenlabs)
-            }
+        if "deepgram" in keys_dict:
+            keys.deepgram = encrypt_key(keys_dict["deepgram"])
+        if "openai" in keys_dict:
+            keys.openai = encrypt_key(keys_dict["openai"])
+        if "elevenlabs" in keys_dict:
+            keys.elevenlabs = encrypt_key(keys_dict["elevenlabs"])
+            
+        await keys.save()
+        return {
+            "deepgram": decrypt_key(keys.deepgram),
+            "openai": decrypt_key(keys.openai),
+            "elevenlabs": decrypt_key(keys.elevenlabs)
+        }
 
     # Admin Analytics
     async def get_admin_analytics(self) -> Dict[str, Any]:
@@ -661,4 +580,4 @@ class SQLDatabaseService:
             "cost_history": [6, 9, 4, 11, 7, 13, 10, 14, 9, 12, 16, 11, 18, 15]
         }
 
-db = SQLDatabaseService()
+db = BeanieDatabaseService()

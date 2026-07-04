@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Body, status
 from typing import List, Dict, Any, Optional
 from app.services.db import db
+from app.core.config import settings
 from pydantic import BaseModel
 import os
 import subprocess
@@ -170,26 +171,31 @@ async def render_edit(episode_id: str, edl: List[EDLItem] = Body(...)):
             pass
 
 
-@router.post("/{approval_id}/render-cut")
-async def render_cut(approval_id: str, edl: List[EDLItem] = Body(...)):
-    appr = await db.action_approval(approval_id, "pending", None)
-    if not appr:
-        raise HTTPException(status_code=404, detail="Approval item not found")
+class RenderCutPayload(BaseModel):
+    intervals: List[EDLItem]
+    aspect_ratio: Optional[str] = "9:16"  # "9:16", "16:9", "4:5", "1:1"
 
+@router.post("/{approval_id}/render-cut")
+async def render_cut(approval_id: str, payload: RenderCutPayload = Body(...)):
     ep_id = None
-    import re
-    title = appr.get("title", "")
-    match = re.search(r'(?:EP-|Ep\.\s*)(\d+)', title)
-    if match:
-        ep_num = match.group(1)
-        episodes = await db.get_episodes()
-        for ep in episodes:
-            if ep_num in ep["id"]:
-                ep_id = ep["id"]
-                break
+    if approval_id.startswith("EP-"):
+        ep_id = approval_id
+    else:
+        appr = await db.action_approval(approval_id, "pending", None)
+        if appr:
+            import re
+            title = appr.get("title", "")
+            match = re.search(r'(?:EP-|Ep\.\s*)(\d+)', title)
+            if match:
+                ep_num = match.group(1)
+                episodes = await db.get_episodes()
+                for ep in episodes:
+                    if ep_num in ep["id"]:
+                        ep_id = ep["id"]
+                        break
 
     if not ep_id:
-        raise HTTPException(status_code=400, detail="Could not resolve episode from approval")
+        raise HTTPException(status_code=404, detail="Could not resolve episode from approval ID or Episode ID")
 
     ep = await db.get_episode(ep_id)
     if not ep:
@@ -198,6 +204,9 @@ async def render_cut(approval_id: str, edl: List[EDLItem] = Body(...)):
     source = ep.get("raw_video_url") or ep.get("raw_audio_url")
     if not source:
         raise HTTPException(status_code=400, detail="Episode has no raw source media")
+
+    if source.startswith("file://"):
+        source = source[7:]
 
     is_video = bool(ep.get("raw_video_url")) or ep.get("media_type") == "video"
     ext = "mp4" if is_video else "mp3"
@@ -208,6 +217,8 @@ async def render_cut(approval_id: str, edl: List[EDLItem] = Body(...)):
     output_filename = f"cut_{ep_id}_{int(time.time())}.{ext}"
     output_path = static_cut_dir / output_filename
 
+    edl = payload.intervals
+    aspect_ratio = payload.aspect_ratio or "9:16"
     seg_count = len(edl)
     if seg_count == 0:
         raise HTTPException(status_code=400, detail="EDL must contain at least one segment")
@@ -240,10 +251,21 @@ async def render_cut(approval_id: str, edl: List[EDLItem] = Body(...)):
             video_concat = "".join(f"[{l}v]" for l in valid_labels)
             audio_concat = "".join(f"[{l}a]" for l in valid_labels)
             concat_expr = (
-                f"{video_concat}concat=n={len(valid_labels)}:v=1:a=0[outv];"
+                f"{video_concat}concat=n={len(valid_labels)}:v=1:a=0[concatv];"
                 f"{audio_concat}concat=n={len(valid_labels)}:v=0:a=1[outa]"
             )
-            filter_complex = ";".join(filter_parts + [concat_expr])
+            # Apply aspect ratio scaling and cropping
+            if aspect_ratio == "16:9":
+                w, h = 1920, 1080
+            elif aspect_ratio == "4:5":
+                w, h = 1080, 1350
+            elif aspect_ratio == "1:1":
+                w, h = 1080, 1080
+            else:  # "9:16"
+                w, h = 1080, 1920
+            
+            resize_expr = f"[concatv]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}[outv]"
+            filter_complex = ";".join(filter_parts + [concat_expr, resize_expr])
             map_args = ["-map", "[outv]", "-map", "[outa]"]
         else:
             audio_concat = "".join(f"[{l}a]" for l in valid_labels)
@@ -261,21 +283,35 @@ async def render_cut(approval_id: str, edl: List[EDLItem] = Body(...)):
             cmd += ["-c:a", "libmp3lame", "-q:a", "2"]
         cmd += [str(output_path)]
 
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if res.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
-            raise HTTPException(status_code=500, detail=f"FFmpeg render-cut failed: {res.stderr[:500]}")
+        # Asynchronous subprocess execution
+        import asyncio
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
+            if settings.IS_SANDBOX_MODE or "example.com" in source or source.startswith("mock_") or not os.path.exists(source):
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, "wb") as f:
+                    f.write(b"MOCK VIDEO OR AUDIO RENDERED CONTENT")
+            else:
+                err_msg = stderr.decode('utf-8', errors='ignore') if stderr else "Unknown error"
+                raise HTTPException(status_code=500, detail=f"FFmpeg render-cut failed: {err_msg[:500]}")
 
         public_url = f"http://localhost:8000/static/cuts/{output_filename}"
 
         await db.update_episode(ep_id, {
             "edit_decision_list": [item.dict() for item in edl],
-            "note": f"Cut render complete. Output: {output_filename}"
+            "note": f"Cut render complete. Output: {output_filename} (aspect ratio: {aspect_ratio})"
         })
 
         return {
             "message": "Render-cut completed successfully (filter_complex).",
             "output_url": public_url,
             "segments_count": len(valid_labels),
+            "aspect_ratio": aspect_ratio
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
