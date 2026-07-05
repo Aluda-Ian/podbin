@@ -20,6 +20,18 @@ async def get_provider_config() -> ProviderConfig:
     )
 
 
+async def get_openai_api_key() -> str:
+    import os
+    settings_data = await db.get_settings()
+    storage_target = settings_data.get("api_storage_target") or "database"
+    if storage_target == "database":
+        db_keys = await db.get_api_keys()
+        openai_key = db_keys.get("openai")
+        if openai_key:
+            return openai_key
+    return settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "")
+
+
 async def generate_metadata(transcript: str) -> Dict[str, Any]:
     provider = await get_provider_config()
 
@@ -37,10 +49,12 @@ async def generate_metadata(transcript: str) -> Dict[str, Any]:
         )
         model = "gpt-4o"
     elif provider.tier == ProviderTier.PLATFORM_PAID:
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        api_key = await get_openai_api_key()
+        client = AsyncOpenAI(api_key=api_key)
         model = "gpt-4o"
     else:
-        client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        api_key = await get_openai_api_key()
+        client = AsyncOpenAI(api_key=api_key)
         model = "gpt-4o-mini"
 
     try:

@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 from app.services.db import db
 from datetime import datetime
 import secrets
+import os
 import httpx
 
 router = APIRouter()
@@ -88,7 +89,7 @@ async def platform_login(
     settings_data = s or {}
     creds = settings_data.get("integration_credentials", {})
     plat_creds = creds.get(key, {}) or {}
-    client_id = plat_creds.get("client_id", "")
+    client_id = plat_creds.get("client_id", "") or os.getenv(f"{key.upper()}_CLIENT_ID", "")
 
     if not client_id and mode == "live":
         raise HTTPException(status_code=400, detail=f"No OAuth client_id configured for {platform}")
@@ -158,8 +159,8 @@ async def platform_callback(
         token_data["refresh_token"] = f"mock_{key}_refresh_token"
         token_data["scope"] = " ".join(cfg["scopes"])
     elif code and cfg["token_url"]:
-        client_id = plat_creds.get("client_id", "")
-        client_secret = plat_creds.get("client_secret", "")
+        client_id = plat_creds.get("client_id", "") or os.getenv(f"{key.upper()}_CLIENT_ID", "")
+        client_secret = plat_creds.get("client_secret", "") or os.getenv(f"{key.upper()}_CLIENT_SECRET", "")
         redirect_uri = f"{REDIRECT_BASE}/{key}/callback"
         try:
             async with httpx.AsyncClient() as client:

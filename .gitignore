@@ -32,3 +32,6 @@ htmlcov/
 *.njsproj
 *.sln
 *.sw?
+
+# Uploads / Static assets
+backend/static/uploads/

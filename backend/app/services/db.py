@@ -82,6 +82,7 @@ class SettingsDocument(Document):
     autonomyLevel: str
     provider_config: Optional[Dict[str, Any]] = None
     integration_credentials: Optional[Dict[str, Any]] = None
+    api_storage_target: Optional[str] = "database"
 
     class Settings:
         name = "settings"
