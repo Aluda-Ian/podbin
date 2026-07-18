@@ -13,6 +13,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.admin import router as admin_router
 from app.api.v1.distribution import router as distribution_router
 from app.api.v1.integrations import router as integrations_router
+from app.api.v1.notifications import router as notifications_router
 from app.services.db import db
 
 @asynccontextmanager
@@ -23,7 +24,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    description="Backend API for PodBin Podcast Automation platform",
+    description="Backend API for Podule Podcast Automation platform",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -59,3 +60,4 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(admin_router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(distribution_router, prefix="/api/v1/distribution", tags=["distribution"])
 app.include_router(integrations_router, prefix="/api/v1/integrations", tags=["integrations"])
+app.include_router(notifications_router, prefix="/api/v1/notifications", tags=["Notifications"])

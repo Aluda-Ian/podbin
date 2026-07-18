@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 class ScheduleRequest(BaseModel):
-    scheduled_at: str  # ISO datetime string
+    scheduled_at: str
     platforms: List[str]
     title: Optional[str] = None
     description: Optional[str] = None
@@ -32,25 +32,32 @@ async def schedule_episode(episode_id: str, payload: ScheduleRequest = Body(...)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
 
+    settings_data = await db.get_settings()
+    creds = settings_data.get("integration_credentials", {}) or {}
+
     sandbox_enforced = settings.IS_SANDBOX_MODE
     sandbox_notes = []
     details = {}
+
+    video_url = ep.get("raw_video_url")
+    if not video_url:
+        raise HTTPException(status_code=400, detail="No raw video URL available. Upload media before scheduling.")
 
     for platform in payload.platforms:
         plat = platform.lower()
 
         if plat == "youtube":
             actual_privacy = "private" if sandbox_enforced else (payload.privacy_status or "public")
-            res = publish_to_youtube(
+            youtube_creds = creds.get("youtube", {}) or {}
+            tokens = youtube_creds.get("tokens", {}) or {}
+            res = await publish_to_youtube(
                 payload.title or ep.get("title", "Untitled"),
-                ep.get("raw_video_url") or "mock_path.mp4",
+                video_url,
                 actual_privacy,
+                access_token=tokens.get("access_token", ""),
             )
             details[platform] = res
-            if sandbox_enforced:
-                sandbox_notes.append(f"YouTube: privacy forced to 'private' (sandbox mode)")
-            else:
-                sandbox_notes.append(f"YouTube: privacy set to '{actual_privacy}'")
+            sandbox_notes.append(f"YouTube: privacy set to '{actual_privacy}'")
 
         elif plat == "spotify":
             all_eps = await db.get_episodes()
@@ -63,35 +70,28 @@ async def schedule_episode(episode_id: str, payload: ScheduleRequest = Body(...)
 
         elif plat in ("apple", "apple podcasts"):
             details[platform] = {"status": "scheduled", "platform": "Apple Podcasts Connect"}
-            if sandbox_enforced:
-                sandbox_notes.append(f"{platform}: Submission blocked in sandbox mode — no-op")
-            else:
-                sandbox_notes.append(f"{platform}: Scheduled for live distribution")
+            sandbox_notes.append(f"{platform}: RSS-based distribution — submit your RSS feed to Apple Podcasts Connect")
 
         elif plat == "tiktok":
             actual_privacy = "private" if sandbox_enforced else (payload.privacy_status or "public")
-            res = publish_to_tiktok(
+            tiktok_creds = creds.get("tiktok", {}) or {}
+            tokens = tiktok_creds.get("tokens", {}) or {}
+            res = await publish_to_tiktok(
                 payload.title or ep.get("title", "Untitled"),
-                ep.get("raw_video_url") or "mock_path.mp4",
+                video_url,
                 actual_privacy,
+                access_token=tokens.get("access_token", ""),
             )
             details[platform] = res
-            if sandbox_enforced:
-                sandbox_notes.append("TikTok: privacy forced to 'private' (sandbox mode)")
-            else:
-                sandbox_notes.append(f"TikTok: privacy set to '{actual_privacy}'")
+            sandbox_notes.append(f"TikTok: privacy set to '{actual_privacy}'")
 
         elif plat in ("instagram", "twitter", "x", "linkedin", "facebook"):
             details[platform] = {"status": "scheduled", "platform": platform}
-            if sandbox_enforced:
-                sandbox_notes.append(f"{platform}: Scheduled in sandbox — post will NOT go live")
-            else:
-                sandbox_notes.append(f"{platform}: Scheduled for live publication")
+            sandbox_notes.append(f"{platform}: Social post scheduled — requires connected OAuth app")
 
         else:
             sandbox_notes.append(f"{platform}: Unknown platform — skipped")
 
-    # Persist the schedule in the episode record
     existing_schedule = ep.get("socials_schedule") or []
     schedule_entry = {
         "id": f"sched-{episode_id}-{len(existing_schedule) + 1}",

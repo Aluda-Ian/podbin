@@ -9,9 +9,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.models.user import User
 from app.models.episode import Episode
+from app.models.notification import Notification
 
 # Secure key encryption helper
-ENCRYPTION_SALT = os.getenv("ENCRYPTION_SALT", "podbin_secure_salt")
+ENCRYPTION_SALT = os.getenv("ENCRYPTION_SALT", "podule_secure_salt")
 
 def encrypt_key(key: str) -> str:
     if not key:
@@ -39,8 +40,8 @@ if not MONGODB_URL:
     else:
         MONGODB_URL = "mongodb://localhost:27017"
 
-# Parse database name from the URL or fall back to "podbin"
-db_name = "podbin"
+# Parse database name from the URL or fall back to "podule"
+db_name = "podule"
 parsed = urlparse(MONGODB_URL)
 if parsed.path and parsed.path != "/":
     db_name = parsed.path.lstrip("/")
@@ -83,6 +84,13 @@ class SettingsDocument(Document):
     provider_config: Optional[Dict[str, Any]] = None
     integration_credentials: Optional[Dict[str, Any]] = None
     api_storage_target: Optional[str] = "database"
+    operational_tier: Optional[str] = "FREE"
+    orchestrator_model: Optional[str] = "Podule Copilot (Free)"
+    transcription_model: Optional[str] = "Faster-Whisper (Local CPU)"
+    tts_model: Optional[str] = "gTTS (Free)"
+    image_model: Optional[str] = "Stable Diffusion (Free)"
+    video_model: Optional[str] = "FFmpeg Auto Crop (Free)"
+    avatar_model: Optional[str] = "Simulated Avatar (Free)"
 
     class Settings:
         name = "settings"
@@ -97,137 +105,7 @@ class APIKeysDocument(Document):
         name = "api_keys"
 
 
-SEED_DATA = {
-    "episodes": [
-        { 
-            "id": "EP-145", "title": "Biohacking 2026", "guest": "Dr. Lina Okafor", "avatar": "guest2", "stage": "Pre-Prod", "status": "BOOKING", "duration": "—", "date": "Jun 30", "progress": 18, "note": "Awaiting calendar confirmation", "raw_audio_url": "https://example.com/audio/ep145.mp3",
-            "clips": [],
-            "distribution_channels": [
-                { "name": "Spotify for Podcasters", "status": "PENDING", "url": "https://podcasters.spotify.com" },
-                { "name": "Apple Podcasts Connect", "status": "PENDING", "url": "https://podcastsconnect.apple.com" },
-                { "name": "YouTube Studio", "status": "PENDING", "url": "https://studio.youtube.com" }
-            ],
-            "socials_schedule": []
-        },
-        { 
-            "id": "EP-144", "title": "The Future of LLMs", "guest": "Andrej Karpathy", "avatar": "guest1", "stage": "Pre-Prod", "status": "RESEARCH", "duration": "—", "date": "Jun 28", "progress": 40, "note": "Mapping 18 mo. of public talks", "raw_audio_url": "https://example.com/audio/ep144.mp3",
-            "clips": [],
-            "distribution_channels": [
-                { "name": "Spotify for Podcasters", "status": "PENDING", "url": "https://podcasters.spotify.com" },
-                { "name": "Apple Podcasts Connect", "status": "PENDING", "url": "https://podcastsconnect.apple.com" },
-                { "name": "YouTube Studio", "status": "PENDING", "url": "https://studio.youtube.com" }
-            ],
-            "socials_schedule": []
-        },
-        { 
-            "id": "EP-143", "title": "Synthetic Media Ethics", "guest": "Marcus Cole", "avatar": "guest2", "stage": "Post-Prod", "status": "EDITING", "duration": "01:12:44", "date": "Jun 25", "progress": 72, "note": "Cleaning noise floor — pass 2/3", "raw_audio_url": "https://example.com/audio/ep143.mp3",
-            "clips": [
-                { "id": "clip-1", "title": "Deepfakes and Consent", "text": "We are essentially living inside a high-fidelity simulation of last year's consensus.", "startTime": "00:42", "endTime": "01:15", "platform": "TikTok", "status": "APPROVED" },
-                { "id": "clip-2", "title": "Regulatory Gaps", "text": "The law is always 5 years behind the deployment of these models.", "startTime": "12:10", "endTime": "13:05", "platform": "YouTube Shorts", "status": "PENDING" }
-            ],
-            "distribution_channels": [
-                { "name": "Spotify for Podcasters", "status": "PENDING", "url": "https://podcasters.spotify.com" },
-                { "name": "Apple Podcasts Connect", "status": "PENDING", "url": "https://podcastsconnect.apple.com" },
-                { "name": "YouTube Studio", "status": "PENDING", "url": "https://studio.youtube.com" }
-            ],
-            "socials_schedule": [
-                { "id": "sched-1", "platform": "TikTok", "caption": "Living in a simulation... Ep. 143 is live!", "time": "2026-06-27T10:00:00", "status": "SCHEDULED" }
-            ]
-        },
-        { 
-            "id": "EP-142", "title": "Scaling Creator Platforms", "guest": "Jane Wu", "avatar": "guest3", "stage": "Post-Prod", "status": "MASTERING", "duration": "00:58:21", "date": "Jun 22", "progress": 91, "note": "Loudness normalization −16 LUFS", "raw_audio_url": "https://example.com/audio/ep142.mp3",
-            "clips": [],
-            "distribution_channels": [
-                { "name": "Spotify for Podcasters", "status": "PENDING", "url": "https://podcasters.spotify.com" },
-                { "name": "Apple Podcasts Connect", "status": "PENDING", "url": "https://podcastsconnect.apple.com" },
-                { "name": "YouTube Studio", "status": "PENDING", "url": "https://studio.youtube.com" }
-            ],
-            "socials_schedule": []
-        },
-        { 
-            "id": "EP-141", "title": "Silicon Valley Shifts", "guest": "Patrick Hsu", "avatar": "guest3", "stage": "Growth", "status": "DISTRO", "duration": "01:04:09", "date": "Jun 18", "progress": 100, "note": "Published to directories", "bars": [4, 6, 3, 5, 7, 5, 6], "prediction": "Predicting 14.2k views in 48h", "raw_audio_url": "https://example.com/audio/ep141.mp3",
-            "clips": [],
-            "distribution_channels": [
-                { "name": "Spotify for Podcasters", "status": "LIVE", "url": "https://podcasters.spotify.com" },
-                { "name": "Apple Podcasts Connect", "status": "LIVE", "url": "https://podcastsconnect.apple.com" },
-                { "name": "YouTube Studio", "status": "PROCESSING", "url": "https://studio.youtube.com" }
-            ],
-            "socials_schedule": []
-        },
-        { 
-            "id": "EP-140", "title": "Founder Burnout", "guest": "Alex Rivers", "avatar": "guest1", "stage": "Growth", "status": "LIVE", "duration": "00:49:55", "date": "Jun 14", "progress": 100, "note": "Trending #4 on Spotify Tech", "bars": [3, 5, 6, 4, 7, 8, 6], "prediction": "Trending #4 on Spotify Tech", "raw_audio_url": "https://example.com/audio/ep140.mp3",
-            "clips": [],
-            "distribution_channels": [
-                { "name": "Spotify for Podcasters", "status": "LIVE", "url": "https://podcasters.spotify.com" },
-                { "name": "Apple Podcasts Connect", "status": "LIVE", "url": "https://podcastsconnect.apple.com" },
-                { "name": "YouTube Studio", "status": "LIVE", "url": "https://studio.youtube.com" }
-            ],
-            "socials_schedule": []
-        },
-        { 
-            "id": "EP-139", "title": "The Climate Tech Pivot", "guest": "Marcus Cole", "avatar": "guest2", "stage": "Growth", "status": "LIVE", "duration": "01:21:03", "date": "Jun 10", "progress": 100, "note": "published", "raw_audio_url": "https://example.com/audio/ep139.mp3",
-            "clips": [],
-            "distribution_channels": [
-                { "name": "Spotify for Podcasters", "status": "LIVE", "url": "https://podcasters.spotify.com" },
-                { "name": "Apple Podcasts Connect", "status": "LIVE", "url": "https://podcastsconnect.apple.com" },
-                { "name": "YouTube Studio", "status": "LIVE", "url": "https://studio.youtube.com" }
-            ],
-            "socials_schedule": []
-        },
-        { 
-            "id": "EP-138", "title": "Neural Interfaces 101", "guest": "Andrej Karpathy", "avatar": "guest1", "stage": "Growth", "status": "LIVE", "duration": "00:55:12", "date": "Jun 06", "progress": 100, "note": "published", "raw_audio_url": "https://example.com/audio/ep138.mp3",
-            "clips": [],
-            "distribution_channels": [
-                { "name": "Spotify for Podcasters", "status": "LIVE", "url": "https://podcasters.spotify.com" },
-                { "name": "Apple Podcasts Connect", "status": "LIVE", "url": "https://podcastsconnect.apple.com" },
-                { "name": "YouTube Studio", "status": "LIVE", "url": "https://studio.youtube.com" }
-            ],
-            "socials_schedule": []
-        }
-    ],
-    "approvals": [
-        { "id": "appr-1", "podcast_id": "podcast-1", "type": "CLIP_GENERATED", "title": "Vertical 9:16 · Ep. 142", "quote": "\"We are essentially living inside a high-fidelity simulation of last year's consensus.\"", "meta": "00:42 · 1080×1920 · Generated 4m ago", "priority": "high", "agent": "Repurpose Agent", "status": "PENDING" },
-        { "id": "appr-2", "podcast_id": "podcast-1", "type": "SHOW_NOTES", "title": "Markdown · Ep. 141", "quote": "Summary for Ep. 141: Exploring Neural Interfaces and the regulatory gap between research labs and consumer rollout...", "meta": "1,240 words · Generated 11m ago", "priority": "medium", "agent": "Research Agent", "status": "PENDING" },
-        { "id": "appr-3", "podcast_id": "podcast-1", "type": "NEWSLETTER_DRAFT", "title": "Weekly Recap · Issue #41", "quote": "This week we covered neural interfaces, climate tech, and the founder burnout epidemic. Top 3 takeaways inside.", "meta": "12,400 subscribers · Generated 32m ago", "priority": "medium", "agent": "Repurpose Agent", "status": "PENDING" },
-        { "id": "appr-4", "podcast_id": "podcast-1", "type": "SOCIAL_THREAD", "title": "X / Twitter · 7-post thread", "quote": "🧵 The single biggest myth about AGI timelines, dismantled by Andrej K. in 7 posts.", "meta": "Engagement est. 4.2k · Generated 1h ago", "priority": "low", "agent": "Distribution Agent", "status": "PENDING" },
-        { "id": "appr-5", "podcast_id": "podcast-1", "type": "GUEST_OUTREACH", "title": "Email · Dr. Lina Okafor", "quote": "Hi Lina — loved your recent paper on metabolic markers. Would love to host you on PodBin for Ep. 145...", "meta": "Tone: warm-professional · Generated 2h ago", "priority": "low", "agent": "Booking Agent", "status": "PENDING" }
-    ],
-    "agents": [
-        { "name": "Research Agent", "role": "Sources, talking points, fact-checking", "status": "active", "task": "Indexing source #14 of 23 for Ep. 144", "tasksToday": 42, "success": 98 },
-        { "name": "Booking Agent", "role": "Guest outreach and scheduling", "status": "active", "task": "Negotiating slot with Jane Wu", "tasksToday": 8, "success": 100 },
-        { "name": "Production Agent", "role": "Audio editing, mixing, mastering", "status": "active", "task": "Mixdown pass 2/3 on Ep. 143", "tasksToday": 14, "success": 96 },
-        { "name": "Repurpose Agent", "role": "Clip generation and snippet authoring", "status": "active", "task": "6 clips queued for review", "tasksToday": 28, "success": 92 },
-        { "name": "Distribution Agent", "role": "Multi-channel syndication", "status": "idle", "task": "Idle — last push 14m ago", "tasksToday": 19, "success": 100 }
-    ],
-    "settings": {
-        "workspaceName": "PodBin Studio",
-        "showName": "The Lovable Frontier",
-        "primaryHost": "Jordan Lee",
-        "releaseCadence": "Weekly · Tuesdays 06:00 UTC",
-        "integrations": [
-            { "name": "Spotify for Podcasters", "status": "Connected (Live)", "color": "text-success" },
-            { "name": "Apple Podcasts Connect", "status": "Connected (Live)", "color": "text-success" },
-            { "name": "YouTube Studio", "status": "Connected (Live)", "color": "text-success" },
-            { "name": "TikTok for Business", "status": "Connected (Live)", "color": "text-success" },
-            { "name": "X / Twitter", "status": "Disconnected", "color": "text-muted" },
-            { "name": "Substack", "status": "Disconnected", "color": "text-muted" }
-        ],
-        "autonomyLevel": "Human-in-the-loop",
-        "integration_credentials": {
-            "global_sandbox_mode": True,
-            "facebook": {"client_id": "483920194830201", "client_secret": ""},
-            "spotify": {"client_id": "839201938201", "client_secret": ""},
-            "youtube": {"client_id": "9301829038102", "client_secret": ""},
-            "tiktok": {"client_id": "839201830291", "client_secret": ""},
-            "twitter": {"client_id": "38201938201", "client_secret": ""}
-        }
-    },
-    "users": [
-        { "id": "user-1", "name": "Alex Admin", "email": "admin@podbin.com", "role": "Super Admin", "password": "password123", "podcast_ids": ["*"] },
-        { "id": "user-2", "name": "Jordan Lee", "email": "owner@podbin.com", "role": "Podcast Owner", "password": "password123", "podcast_ids": ["podcast-1"] },
-        { "id": "user-3", "name": "Taylor Team", "email": "member@podbin.com", "role": "Team Member", "password": "password123", "podcast_ids": ["podcast-1"] }
-    ]
-}
+
 
 class BeanieDatabaseService:
     def __init__(self):
@@ -243,62 +121,10 @@ class BeanieDatabaseService:
                 Approval,
                 Agent,
                 SettingsDocument,
-                APIKeysDocument
+                APIKeysDocument,
+                Notification
             ]
         )
-        
-        # Only seed the database if it has not been initialized yet
-        if await SettingsDocument.count() > 0:
-            return
-        
-        for u in SEED_DATA["users"]:
-            await User(
-                id=u["id"], name=u["name"], email=u["email"],
-                role=u["role"], password=u["password"],
-                podcast_ids=u["podcast_ids"], suspended=False,
-                provider_config=None
-            ).insert()
-        
-        for ep in SEED_DATA["episodes"]:
-            db_ep = Episode(
-                id=ep["id"], title=ep["title"], guest=ep["guest"],
-                avatar=ep["avatar"], stage=ep["stage"], status=ep["status"],
-                duration=ep["duration"], date=ep["date"], progress=ep["progress"],
-                note=ep["note"], bars=ep.get("bars", []), prediction=ep.get("prediction"),
-                raw_audio_url=ep.get("raw_audio_url"), raw_video_url=ep.get("raw_video_url"),
-                media_type=ep.get("media_type", "audio"), podcast_id=ep.get("podcast_id", "podcast-1"),
-                transcript=ep.get("transcript"), generated_content=ep.get("generated_content", {}),
-                human_feedback=ep.get("human_feedback"), clips=ep.get("clips", []),
-                distribution_channels=ep.get("distribution_channels", []),
-                socials_schedule=ep.get("socials_schedule", []), word_timeline=ep.get("word_timeline", []),
-                edit_decision_list=ep.get("edit_decision_list", []), selected_llm_config=ep.get("selected_llm_config", {})
-            )
-            await db_ep.insert()
-
-        for appr in SEED_DATA["approvals"]:
-            await Approval(
-                id=appr["id"], podcast_id=appr["podcast_id"], type=appr["type"],
-                title=appr["title"], quote=appr["quote"], meta=appr["meta"],
-                priority=appr["priority"], agent=appr["agent"], status=appr["status"]
-            ).insert()
-
-        for ag in SEED_DATA["agents"]:
-            await Agent(
-                id=ag["name"], name=ag["name"], role=ag["role"], status=ag["status"],
-                task=ag["task"], tasksToday=ag["tasksToday"], success=ag["success"]
-            ).insert()
-
-        s = SEED_DATA["settings"]
-        await SettingsDocument(
-            id="1", workspaceName=s["workspaceName"], showName=s["showName"],
-            primaryHost=s["primaryHost"], releaseCadence=s["releaseCadence"],
-            integrations=s["integrations"], autonomyLevel=s["autonomyLevel"],
-            integration_credentials=s["integration_credentials"]
-        ).insert()
-
-        await APIKeysDocument(
-            id="1", deepgram="", openai="", elevenlabs=""
-        ).insert()
 
     def _ensure_defaults(self, ep: Dict[str, Any]):
         if "status" not in ep or ep["status"] is None:
@@ -306,26 +132,11 @@ class BeanieDatabaseService:
         if "stage" not in ep or ep["stage"] is None:
             ep["stage"] = "Pre-Prod"
         if "clips" not in ep or ep["clips"] is None:
-            if ep.get("id") == "EP-143":
-                ep["clips"] = [
-                    { "id": "clip-1", "title": "Deepfakes and Consent", "text": "We are essentially living inside a high-fidelity simulation of last year's consensus.", "startTime": "00:42", "endTime": "01:15", "platform": "TikTok", "status": "APPROVED" },
-                    { "id": "clip-2", "title": "Regulatory Gaps", "text": "The law is always 5 years behind the deployment of these models.", "startTime": "12:10", "endTime": "13:05", "platform": "YouTube Shorts", "status": "PENDING" }
-                ]
-            else:
-                ep["clips"] = []
+            ep["clips"] = []
         if "distribution_channels" not in ep or ep["distribution_channels"] is None:
-            ep["distribution_channels"] = [
-                { "name": "Spotify for Podcasters", "status": "LIVE" if ep.get("stage") == "Growth" else "PENDING", "url": "https://podcasters.spotify.com" },
-                { "name": "Apple Podcasts Connect", "status": "LIVE" if ep.get("stage") == "Growth" else "PENDING", "url": "https://podcastsconnect.apple.com" },
-                { "name": "YouTube Studio", "status": "PROCESSING" if ep.get("status") == "DISTRO" else ("LIVE" if ep.get("status") == "LIVE" else "PENDING"), "url": "https://studio.youtube.com" }
-            ]
+            ep["distribution_channels"] = []
         if "socials_schedule" not in ep or ep["socials_schedule"] is None:
-            if ep.get("id") == "EP-143":
-                ep["socials_schedule"] = [
-                    { "id": "sched-1", "platform": "TikTok", "caption": "Living in a simulation... Ep. 143 is live!", "time": "2026-06-27T10:00:00", "status": "SCHEDULED" }
-                ]
-            else:
-                ep["socials_schedule"] = []
+            ep["socials_schedule"] = []
         if "podcast_id" not in ep or ep["podcast_id"] is None:
             ep["podcast_id"] = "podcast-1"
         if "media_type" not in ep or ep["media_type"] is None:
@@ -516,24 +327,36 @@ class BeanieDatabaseService:
         await u.save()
         return {"id": u.id, **u.model_dump()}
 
-    async def invite_user(self, name: str, email: str, role: str) -> Dict[str, Any]:
-        u = await User.find_one(User.email == email)
-        if u:
-            return {"id": u.id, **u.model_dump()}
-            
+    async def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
         all_users = await User.find_all().to_list()
         new_id = f"user-{len(all_users) + 1}"
         new_user = User(
             id=new_id,
-            name=name,
-            email=email,
-            role=role,
-            password="password123",
-            podcast_ids=["podcast-1"],
+            name=user_data.get("name", ""),
+            email=user_data.get("email", ""),
+            role=user_data.get("role", "Team Member"),
+            password=user_data.get("password", ""),
+            podcast_ids=user_data.get("podcast_ids", ["podcast-1"]),
             suspended=False
         )
         await new_user.insert()
         return {"id": new_user.id, **new_user.model_dump()}
+
+    async def update_user(self, user_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        u = await User.get(user_id)
+        if not u:
+            return None
+        for k, v in updates.items():
+            if hasattr(u, k):
+                setattr(u, k, v)
+        await u.save()
+        return {"id": u.id, **u.model_dump()}
+
+    async def invite_user(self, name: str, email: str, role: str) -> Dict[str, Any]:
+        u = await User.find_one(User.email == email)
+        if u:
+            return {"id": u.id, **u.model_dump()}
+        return await self.create_user({"name": name, "email": email, "role": role, "password": "password123"})
 
     # API Keys Operations
     async def get_api_keys(self) -> Dict[str, str]:
@@ -573,12 +396,37 @@ class BeanieDatabaseService:
     async def get_admin_analytics(self) -> Dict[str, Any]:
         episodes = await self.get_episodes()
         total_episodes = len(episodes)
-        total_costs = round(total_episodes * 5.35 + 12.80, 2)
+        users = await self.get_users()
         return {
             "total_episodes": total_episodes,
-            "system_error_rate": "1.2%",
-            "total_api_costs": f"${total_costs}",
-            "cost_history": [6, 9, 4, 11, 7, 13, 10, 14, 9, 12, 16, 11, 18, 15]
+            "total_users": len(users),
+            "total_api_costs": None,
+            "cost_history": []
         }
+
+    # Notifications operations
+    async def get_notifications(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        notifs = await Notification.find(Notification.user_id == user_id).sort(-Notification.created_at).limit(limit).to_list()
+        return [{"id": n.id, **n.model_dump()} for n in notifs]
+
+    async def create_notification(self, notif: Dict[str, Any]) -> Dict[str, Any]:
+        db_n = Notification(**notif)
+        await db_n.insert()
+        return {"id": db_n.id, **db_n.model_dump()}
+
+    async def mark_notification_read(self, notif_id: str) -> Optional[Dict[str, Any]]:
+        n = await Notification.get(notif_id)
+        if not n:
+            return None
+        n.read = True
+        await n.save()
+        return {"id": n.id, **n.model_dump()}
+
+    async def mark_all_notifications_read(self, user_id: str) -> int:
+        result = await Notification.find(Notification.user_id == user_id, Notification.read == False).update_many({"$set": {"read": True}})
+        return result.modified_count
+
+    async def get_unread_count(self, user_id: str) -> int:
+        return await Notification.find(Notification.user_id == user_id, Notification.read == False).count()
 
 db = BeanieDatabaseService()

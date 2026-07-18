@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException, Body, status
 from typing import List, Dict, Any, Optional
 from app.services.db import db
-from app.core.config import settings
 from pydantic import BaseModel
 import os
 import subprocess
@@ -32,7 +31,6 @@ async def action_approval(approval_id: str, payload: ActionPayload):
     if not appr:
         raise HTTPException(status_code=404, detail="Approval item not found")
     
-    # Custom post-action logic: if we approve show notes, change the episode status
     if payload.action == "approve" and "Ep." in appr.get("title", ""):
         import re
         title = appr["title"]
@@ -81,11 +79,9 @@ async def render_edit(episode_id: str, edl: List[EDLItem] = Body(...)):
     if not source:
         raise HTTPException(status_code=400, detail="Episode has no raw source media to edit")
         
-    # Create temp directory
     temp_dir = tempfile.mkdtemp()
     segments_file_path = os.path.join(temp_dir, "segments.txt")
     
-    # Resolve backend project root statically
     project_root = Path(__file__).resolve().parents[4]
     
     try:
@@ -94,7 +90,6 @@ async def render_edit(episode_id: str, edl: List[EDLItem] = Body(...)):
             segment_name = f"seg_{idx}.mp3"
             segment_path = os.path.join(temp_dir, segment_name)
             
-            # Slicing cmd
             cmd = [
                 "ffmpeg", "-y",
                 "-ss", str(item.start),
@@ -106,7 +101,6 @@ async def render_edit(episode_id: str, edl: List[EDLItem] = Body(...)):
             
             res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             if res.returncode != 0:
-                # Fallback to copy bypass encoding
                 cmd_fallback = [
                     "ffmpeg", "-y",
                     "-ss", str(item.start),
@@ -122,19 +116,16 @@ async def render_edit(episode_id: str, edl: List[EDLItem] = Body(...)):
         if not segment_paths:
             raise HTTPException(status_code=500, detail="Failed to slice any valid media segments.")
             
-        # Write segment paths to demuxer file
         with open(segments_file_path, "w") as f:
             for path in segment_paths:
                 escaped_path = path.replace("\\", "/").replace("'", "'\\''")
                 f.write(f"file '{escaped_path}'\n")
                 
-        # Resolve output directory inside static folder
         static_edited_dir = project_root / "static" / "edited"
         static_edited_dir.mkdir(parents=True, exist_ok=True)
         output_filename = f"edited_{episode_id}_{int(time.time())}.mp3"
         output_path = static_edited_dir / output_filename
         
-        # Concatenate segments
         concat_cmd = [
             "ffmpeg", "-y",
             "-f", "concat",
@@ -151,10 +142,9 @@ async def render_edit(episode_id: str, edl: List[EDLItem] = Body(...)):
             
         public_url = f"http://localhost:8000/static/edited/{output_filename}"
         
-        # Save edit decision list and output url in db
         await db.update_episode(episode_id, {
             "raw_audio_url": public_url,
-            "edit_decision_list": [item.dict() for item in edl],
+            "edit_decision_list": [item.model_dump() for item in edl],
             "note": f"Descript EDL synthesis complete. Output: {output_filename}"
         })
         
@@ -173,7 +163,7 @@ async def render_edit(episode_id: str, edl: List[EDLItem] = Body(...)):
 
 class RenderCutPayload(BaseModel):
     intervals: List[EDLItem]
-    aspect_ratio: Optional[str] = "9:16"  # "9:16", "16:9", "4:5", "1:1"
+    aspect_ratio: Optional[str] = "9:16"
 
 @router.post("/{approval_id}/render-cut")
 async def render_cut(approval_id: str, payload: RenderCutPayload = Body(...)):
@@ -254,14 +244,13 @@ async def render_cut(approval_id: str, payload: RenderCutPayload = Body(...)):
                 f"{video_concat}concat=n={len(valid_labels)}:v=1:a=0[concatv];"
                 f"{audio_concat}concat=n={len(valid_labels)}:v=0:a=1[outa]"
             )
-            # Apply aspect ratio scaling and cropping
             if aspect_ratio == "16:9":
                 w, h = 1920, 1080
             elif aspect_ratio == "4:5":
                 w, h = 1080, 1350
             elif aspect_ratio == "1:1":
                 w, h = 1080, 1080
-            else:  # "9:16"
+            else:
                 w, h = 1080, 1920
             
             resize_expr = f"[concatv]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}[outv]"
@@ -283,7 +272,6 @@ async def render_cut(approval_id: str, payload: RenderCutPayload = Body(...)):
             cmd += ["-c:a", "libmp3lame", "-q:a", "2"]
         cmd += [str(output_path)]
 
-        # Asynchronous subprocess execution
         import asyncio
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -292,18 +280,12 @@ async def render_cut(approval_id: str, payload: RenderCutPayload = Body(...)):
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
-            if settings.IS_SANDBOX_MODE or "example.com" in source or source.startswith("mock_") or not os.path.exists(source):
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(output_path, "wb") as f:
-                    f.write(b"MOCK VIDEO OR AUDIO RENDERED CONTENT")
-            else:
-                err_msg = stderr.decode('utf-8', errors='ignore') if stderr else "Unknown error"
-                raise HTTPException(status_code=500, detail=f"FFmpeg render-cut failed: {err_msg[:500]}")
+            raise HTTPException(status_code=500, detail="FFmpeg rendering failed")
 
         public_url = f"http://localhost:8000/static/cuts/{output_filename}"
 
         await db.update_episode(ep_id, {
-            "edit_decision_list": [item.dict() for item in edl],
+            "edit_decision_list": [item.model_dump() for item in edl],
             "note": f"Cut render complete. Output: {output_filename} (aspect ratio: {aspect_ratio})"
         })
 

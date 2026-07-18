@@ -8,13 +8,29 @@ def transcription_node(state: EpisodeState) -> EpisodeState:
     Halts execution by setting status to PENDING_REVIEW, awaiting explicit user triggers.
     """
     print("Executing transcription_node...")
+    transcript = state.get("transcript")
+    word_timeline = state.get("word_timeline")
+
+    if not transcript:
+        print("No transcript available in state. Setting status to DRAFT.")
+        return {
+            "raw_audio_url": state.get("raw_audio_url"),
+            "transcript": "",
+            "generated_content": state.get("generated_content") or {"titles": [], "notes": "", "social_snippets": []},
+            "status": EpisodeStatus.DRAFT,
+            "human_feedback": state.get("human_feedback"),
+            "word_timeline": word_timeline or [],
+            "edit_decision_list": state.get("edit_decision_list") or [],
+            "selected_llm_config": state.get("selected_llm_config") or {}
+        }
+
     return {
         "raw_audio_url": state.get("raw_audio_url"),
-        "transcript": state.get("transcript") or "This is a placeholder transcript simulated by the transcription node.",
+        "transcript": transcript,
         "generated_content": state.get("generated_content") or {"titles": [], "notes": "", "social_snippets": []},
         "status": EpisodeStatus.PENDING_REVIEW,
         "human_feedback": state.get("human_feedback"),
-        "word_timeline": state.get("word_timeline") or [],
+        "word_timeline": word_timeline or [],
         "edit_decision_list": state.get("edit_decision_list") or [],
         "selected_llm_config": state.get("selected_llm_config") or {}
     }

@@ -14,28 +14,17 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-# Simulated Deepgram transcription pipeline requesting word-level timestamps
 async def run_deepgram_transcription_pipeline(audio_url: str, timestamps: bool = True) -> dict:
-    # If timestamps=True (or timestamps=true), it returns word-level timeline precision.
-    if not timestamps:
-        return {"transcript": "This is a transcript without word timeline.", "words": []}
-    
-    simulated_words = [
-        {"word": "Welcome", "start": 0.1, "end": 0.5, "id": "w1"},
-        {"word": "to", "start": 0.5, "end": 0.7, "id": "w2"},
-        {"word": "PodBin,", "start": 0.7, "end": 1.2, "id": "w3"},
-        {"word": "the", "start": 1.2, "end": 1.4, "id": "w4"},
-        {"word": "autonomous", "start": 1.4, "end": 2.1, "id": "w5"},
-        {"word": "podcast", "start": 2.1, "end": 2.6, "id": "w6"},
-        {"word": "editing", "start": 2.6, "end": 3.1, "id": "w7"},
-        {"word": "and", "start": 3.1, "end": 3.3, "id": "w8"},
-        {"word": "distribution", "start": 3.3, "end": 4.0, "id": "w9"},
-        {"word": "platform.", "start": 4.0, "end": 4.6, "id": "w10"}
-    ]
-    return {
-        "transcript": "Welcome to PodBin, the autonomous podcast editing and distribution platform.",
-        "words": simulated_words
-    }
+    from app.services.llm import run_local_whisper_transcription
+    from app.services.transcription import get_deepgram_api_key
+
+    deepgram_key = await get_deepgram_api_key()
+
+    if not deepgram_key or deepgram_key.startswith("dg-...") or "mock" in deepgram_key.lower() or "sandbox" in deepgram_key.lower():
+        print("No real Deepgram key configured. Running local fallback Whisper transcription...")
+        return await run_local_whisper_transcription(audio_url)
+    else:
+        return await run_local_whisper_transcription(audio_url)
 
 class EpisodeCreate(BaseModel):
     title: str
@@ -60,6 +49,7 @@ class EpisodeUpdate(BaseModel):
     clips: Optional[List[Clip]] = None
     distribution_channels: Optional[List[DistributionChannel]] = None
     socials_schedule: Optional[List[SocialsSchedule]] = None
+    transcript: Optional[str] = None
     generated_content: Optional[Dict[str, Any]] = None
 
 class MetadataRequest(BaseModel):
@@ -95,7 +85,6 @@ async def create_episode(
     avatar: Optional[UploadFile] = File(None),
     podcast_id: Optional[str] = Form("podcast-1")
 ):
-    # Determine audio/video source
     media_path_or_url = url
     is_video = False
     if file:
@@ -127,7 +116,6 @@ async def create_episode(
             detail="Either a media file or a URL must be provided."
         )
 
-    # Save avatar if provided
     avatar_url = None
     if avatar:
         avatars_dir = Path("static") / "avatars"
@@ -141,12 +129,11 @@ async def create_episode(
             f.write(content)
         avatar_url = f"http://localhost:8000/static/avatars/{avatar_filename}"
 
-    # Initialize episode data
     date_str = datetime.now().strftime("%b %d")
     new_ep = {
         "title": title,
         "guest": guest,
-        "avatar": avatar_url if avatar_url else "",  # No default mock avatar
+        "avatar": avatar_url if avatar_url else "",
         "stage": "Pre-Prod",
         "status": EpisodeStatus.RESEARCH,
         "duration": "—",
@@ -165,9 +152,7 @@ async def create_episode(
         "selected_llm_config": {}
     }
 
-    # Run LangGraph workflow (simulated or real)
     try:
-        # Request word-level timestamps (timestamps=True)
         dg_res = await run_deepgram_transcription_pipeline(media_path_or_url, timestamps=True)
         new_ep["transcript"] = dg_res["transcript"]
         new_ep["word_timeline"] = dg_res["words"]
@@ -183,21 +168,17 @@ async def create_episode(
             selected_llm_config={}
         )
         graph_result = await app_graph.ainvoke(initial_state)
-        # Update episode with graph execution results
         new_ep["transcript"] = graph_result.get("transcript")
         new_ep["generated_content"] = graph_result.get("generated_content")
         new_ep["word_timeline"] = graph_result.get("word_timeline")
         new_ep["edit_decision_list"] = graph_result.get("edit_decision_list")
         new_ep["selected_llm_config"] = graph_result.get("selected_llm_config")
-        # Graph halts at PENDING_REVIEW — awaiting explicit user trigger
         new_ep["status"] = EpisodeStatus.PENDING_REVIEW
         new_ep["progress"] = 40
         new_ep["note"] = "Transcription complete. Awaiting human review."
     except Exception as e:
         print(f"LangGraph execution failed: {e}")
-        # We proceed even if graph failed, just saving the basic structure
 
-    # Save to MongoDB via Beanie
     all_eps = await Episode.find_all().to_list()
     existing_ids = []
     for ep in all_eps:
@@ -215,7 +196,6 @@ async def create_episode(
     added_ep = added_ep_doc.model_dump()
     added_ep["id"] = added_ep_doc.id
     
-    # Also seed a matching approval task!
     import uuid
     appr_id = f"appr-{str(uuid.uuid4())[:8]}"
     await db.add_approval({
@@ -236,7 +216,6 @@ async def ingest_episode(
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None)
 ):
-    # Legacy compatibility endpoint, maps to create_episode with defaults
     return await create_episode(
         title="Ingested Episode",
         guest="Unknown Guest",
@@ -246,8 +225,7 @@ async def ingest_episode(
 
 @router.put("/{episode_id}", response_model=EpisodeResponse)
 async def update_episode(episode_id: str, updates: EpisodeUpdate):
-    # filter out None updates
-    upd = {k: v for k, v in updates.dict().items() if v is not None}
+    upd = {k: v for k, v in updates.model_dump().items() if v is not None}
     ep = await Episode.get(episode_id)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
@@ -312,14 +290,10 @@ async def transcribe_episode(episode_id: str):
             "note": "Transcription complete. Ready for review.",
         })
     except Exception as e:
-        # Fall back to simulated transcription so UI doesn't break
-        updated = await db.update_episode(episode_id, {
-            "transcript": "Transcription complete. (Simulated — configure Deepgram key for real transcription.)",
-            "word_timeline": [],
-            "status": EpisodeStatus.PENDING_REVIEW,
-            "progress": 40,
-            "note": f"Transcription complete (simulated). Error: {str(e)[:120]}",
-        })
+        raise HTTPException(
+            status_code=500,
+            detail=f"Transcription pipeline failed: {str(e)}"
+        )
 
     return updated
 
@@ -375,9 +349,18 @@ async def publish_episode(episode_id: str, platform: str = "YouTube"):
     ep = await db.get_episode(episode_id)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
+
+    settings_data = await db.get_settings()
+    creds = settings_data.get("integration_credentials", {}) or {}
         
     if platform.lower() == "youtube":
-        res = publish_to_youtube(ep["title"], ep.get("raw_video_url") or "mock_path.mp4", "public")
+        video_url = ep.get("raw_video_url")
+        if not video_url:
+            raise HTTPException(status_code=400, detail="No raw video URL available. Cannot publish to YouTube.")
+        youtube_creds = creds.get("youtube", {}) or {}
+        tokens = youtube_creds.get("tokens", {}) or {}
+        access_token = tokens.get("access_token", "")
+        res = await publish_to_youtube(ep["title"], video_url, "public", access_token)
         channels = ep.get("distribution_channels") or []
         for ch in channels:
             if ch.get("name") == "YouTube Studio":
@@ -393,7 +376,13 @@ async def publish_episode(episode_id: str, platform: str = "YouTube"):
             "rss_feed": rss_feed
         }
     elif platform.lower() == "tiktok":
-        res = publish_to_tiktok(ep["title"], ep.get("raw_video_url") or "mock_path.mp4", "public")
+        video_url = ep.get("raw_video_url")
+        if not video_url:
+            raise HTTPException(status_code=400, detail="No raw video URL available. Cannot publish to TikTok.")
+        tiktok_creds = creds.get("tiktok", {}) or {}
+        tokens = tiktok_creds.get("tokens", {}) or {}
+        access_token = tokens.get("access_token", "")
+        res = await publish_to_tiktok(ep["title"], video_url, "public", access_token)
         channels = ep.get("distribution_channels") or []
         for ch in channels:
             if ch.get("name") == "TikTok for Business":
@@ -415,7 +404,6 @@ async def generate_episode_metadata(episode_id: str, payload: MetadataRequest = 
 
     result = await generate_metadata(transcript)
 
-    # If burn_in_captions is True, update clips to APPROVED and annotate the note
     if payload.burn_in_captions:
         existing_clips = ep.get("clips") or []
         if existing_clips:
@@ -433,7 +421,6 @@ async def generate_episode_metadata(episode_id: str, payload: MetadataRequest = 
             result["burn_in_captions_applied"] = False
             result["message"] = "No clips found to tag for caption burn-in."
 
-    # Persist the generated content back to the episode
     await db.update_episode(episode_id, {
         "generated_content": {
             "titles": result.get("titles", []),
@@ -506,7 +493,6 @@ async def schedule_episode_endpoint(episode_id: str, payload: ScheduleEpisodeReq
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
 
-    sandbox_notes = []
     existing_schedule = ep.get("socials_schedule") or []
 
     for platform in payload.platforms:
@@ -518,7 +504,6 @@ async def schedule_episode_endpoint(episode_id: str, payload: ScheduleEpisodeReq
             "status": "SCHEDULED",
         }
         existing_schedule.append(new_entry)
-        sandbox_notes.append(f"{platform}: scheduled for {payload.scheduled_at}")
 
     await db.update_episode(episode_id, {
         "socials_schedule": existing_schedule,
@@ -532,6 +517,4 @@ async def schedule_episode_endpoint(episode_id: str, payload: ScheduleEpisodeReq
         "status": "scheduled",
         "scheduled_at": payload.scheduled_at,
         "platforms": payload.platforms,
-        "sandbox_notes": sandbox_notes,
     }
-

@@ -91,14 +91,8 @@ async def platform_login(
     plat_creds = creds.get(key, {}) or {}
     client_id = plat_creds.get("client_id", "") or os.getenv(f"{key.upper()}_CLIENT_ID", "")
 
-    if not client_id and mode == "live":
-        raise HTTPException(status_code=400, detail=f"No OAuth client_id configured for {platform}")
-
     if not client_id:
-        return {
-            "url": f"{REDIRECT_BASE}/{key}/callback?"
-                   f"code=mock_{key}_code&state={mode}|{origin}&origin={origin}"
-        }
+        raise HTTPException(status_code=400, detail=f"No OAuth client_id configured for {platform}")
 
     state = f"{mode}|{origin}|{secrets.token_urlsafe(16)}"
 
@@ -154,11 +148,7 @@ async def platform_callback(
 
     token_data: Dict[str, Any] = {"access_token": "", "refresh_token": "", "token_type": "Bearer"}
 
-    if code and code.startswith("mock_"):
-        token_data["access_token"] = f"mock_{key}_access_token"
-        token_data["refresh_token"] = f"mock_{key}_refresh_token"
-        token_data["scope"] = " ".join(cfg["scopes"])
-    elif code and cfg["token_url"]:
+    if code and cfg["token_url"]:
         client_id = plat_creds.get("client_id", "") or os.getenv(f"{key.upper()}_CLIENT_ID", "")
         client_secret = plat_creds.get("client_secret", "") or os.getenv(f"{key.upper()}_CLIENT_SECRET", "")
         redirect_uri = f"{REDIRECT_BASE}/{key}/callback"
@@ -210,6 +200,46 @@ async def platform_callback(
     await db.update_settings({"integrations": existing_integrations})
 
     return RedirectResponse(url=f"{origin}/settings?connected={platform_name}")
+
+
+@router.get("/links")
+async def integration_links() -> list[Dict[str, Any]]:
+    s = await db.get_settings()
+    settings_data = s or {}
+    integrations = settings_data.get("integrations", [])
+    creds = settings_data.get("integration_credentials", {})
+
+    result: list[Dict[str, Any]] = []
+    for key, cfg in PLATFORM_CONFIG.items():
+        plat_creds = creds.get(key, {}) or {}
+        tokens = plat_creds.get("tokens", {}) or {}
+        status_entry = next((i for i in integrations if i.get("name") == cfg["name"]), None)
+        status = status_entry.get("status", "Disconnected") if status_entry else "Disconnected"
+        connected = status.startswith("Connected") or bool(tokens.get("access_token"))
+
+        origin = "http://localhost:5173"
+        mode = "sandbox"
+        if plat_creds.get("mode") == "live":
+            mode = "live"
+
+        if cfg["auth_url"]:
+            connect_url = (
+                f"{REDIRECT_BASE}/{key}/login"
+                f"?origin={origin}&mode={mode}"
+            )
+        else:
+            connect_url = None
+
+        result.append({
+            "key": key,
+            "name": cfg["name"],
+            "status": status,
+            "connected": connected,
+            "connect_url": connect_url,
+            "mode": plat_creds.get("mode", "sandbox") if connected else None,
+        })
+
+    return result
 
 
 @router.get("/status")

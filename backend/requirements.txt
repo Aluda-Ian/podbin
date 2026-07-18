@@ -11,3 +11,4 @@ beanie>=2.0.0
 motor>=3.3.0
 PyJWT>=2.8.0
 httpx>=0.25.0
+faster-whisper>=1.0.0

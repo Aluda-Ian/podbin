@@ -1,5 +1,7 @@
 import jwt
 import os
+import hashlib
+import secrets
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import Depends, HTTPException, status, Header
@@ -9,6 +11,40 @@ import httpx
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    pwd_hash = hashlib.sha256((salt + password).encode()).hexdigest()
+    return f"{salt}:{pwd_hash}"
+
+
+def verify_password(password: str, hashed: str) -> bool:
+    if ":" not in hashed:
+        return hashed == password
+    salt, pwd_hash = hashed.split(":", 1)
+    return hashlib.sha256((salt + password).encode()).hexdigest() == pwd_hash
+
+
+def create_reset_token(user_id: str) -> str:
+    token = secrets.token_urlsafe(32)
+    expire = datetime.utcnow() + timedelta(hours=1)
+    return jwt.encode(
+        {"user_id": user_id, "reset_token": token, "exp": expire, "purpose": "reset_password"},
+        SECRET_KEY, algorithm=ALGORITHM
+    )
+
+
+def verify_reset_token(token: str) -> Optional[str]:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("purpose") != "reset_password":
+            return None
+        return payload.get("user_id")
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
 
 
 def create_access_token(user_id: str, expires_delta: Optional[timedelta] = None) -> str:
@@ -74,7 +110,7 @@ async def verify_admin_token(authorization: Optional[str] = Header(None)) -> str
     # Check if user is admin
     users = await db.get_users()
     for user in users:
-        if user["id"] == user_id and user.get("role") == "admin":
+        if user["id"] == user_id and user.get("role") in ["admin", "Super Admin", "ADMIN"]:
             return user_id
     
     raise HTTPException(
@@ -185,8 +221,8 @@ async def validate_api_key_format(key_type: str, api_key: str) -> tuple[bool, st
             return False, "Deepgram API key is invalid or expired"
     
     elif key_type == "elevenlabs":
-        if not api_key.startswith(("xi-", "pat-")):
-            return False, "ElevenLabs key must start with 'xi-' or 'pat-'"
+        if len(api_key) < 10:
+            return False, "ElevenLabs API key is too short"
         is_valid = await validate_elevenlabs_api_key(api_key)
         if not is_valid:
             return False, "ElevenLabs API key is invalid or expired"

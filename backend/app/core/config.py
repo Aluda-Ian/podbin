@@ -8,7 +8,7 @@ env_path = backend_root / ".env"
 load_dotenv(dotenv_path=env_path)
 
 class Settings:
-    PROJECT_NAME: str = os.getenv("PROJECT_NAME", "PodBin Backend API")
+    PROJECT_NAME: str = os.getenv("PROJECT_NAME", "Podule Backend API")
     
     # Parse allowed origins from comma separated string
     ALLOWED_ORIGINS: list[str] = [
@@ -19,6 +19,6 @@ class Settings:
     
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     DEEPGRAM_API_KEY: str = os.getenv("DEEPGRAM_API_KEY", "")
-    IS_SANDBOX_MODE: bool = os.getenv("IS_SANDBOX_MODE", "True").lower() == "true"
+    IS_SANDBOX_MODE: bool = os.getenv("IS_SANDBOX_MODE", "False").lower() == "true"
 
 settings = Settings()

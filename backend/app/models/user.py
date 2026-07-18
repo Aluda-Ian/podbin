@@ -20,6 +20,8 @@ class UserResponse(BaseModel):
     role: str  # "Super Admin" | "Podcast Owner" | "Team Member"
     podcast_ids: List[str]
     provider_config: Optional[ProviderConfig] = None
+    monthly_token_usage: int = 0
+    token_limit: int = 100000
 
     class Config:
         from_attributes = True
@@ -56,6 +58,8 @@ class User(Document):
     podcast_ids: List[str]
     suspended: bool = False
     provider_config: Optional[ProviderConfig] = None
+    monthly_token_usage: int = 0
+    token_limit: int = 100000
 
     class Settings:
         name = "users"

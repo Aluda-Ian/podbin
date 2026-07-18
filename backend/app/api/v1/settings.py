@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 from app.services.db import db, encrypt_key, decrypt_key
 from pydantic import BaseModel
 from app.models.user import ProviderConfig
-from app.core.security import verify_token, validate_api_key_format
+from app.core.security import verify_token, validate_api_key_format, verify_admin_token
 import urllib.parse
 import os
 
@@ -14,6 +14,13 @@ class IntegrationItem(BaseModel):
     name: str
     status: str
     color: str
+
+class SMTPConfig(BaseModel):
+    host: Optional[str] = None
+    port: Optional[int] = 587
+    username: Optional[str] = None
+    password: Optional[str] = None
+    from_email: Optional[str] = None
 
 class SettingsUpdate(BaseModel):
     workspaceName: Optional[str] = None
@@ -25,6 +32,14 @@ class SettingsUpdate(BaseModel):
     provider_config: Optional[ProviderConfig] = None
     api_storage_target: Optional[str] = None
     integration_credentials: Optional[Dict[str, Any]] = None
+    operational_tier: Optional[str] = None
+    orchestrator_model: Optional[str] = None
+    transcription_model: Optional[str] = None
+    tts_model: Optional[str] = None
+    image_model: Optional[str] = None
+    video_model: Optional[str] = None
+    avatar_model: Optional[str] = None
+    smtp: Optional[SMTPConfig] = None
 
 class APIKeysPayload(BaseModel):
     deepgram: Optional[str] = ""
@@ -50,6 +65,10 @@ class APIConnectionsPayload(BaseModel):
     api_keys: APIKeysPayload
     integration_credentials: IntegrationCredentialsPayload
 
+class TestProviderPayload(BaseModel):
+    provider: str
+    api_key: str
+
 @router.get("/")
 async def get_settings(authorization: Optional[str] = Header(None)):
     user_id = await verify_token(authorization)
@@ -60,6 +79,10 @@ async def update_settings(payload: SettingsUpdate, authorization: Optional[str] 
     user_id = await verify_token(authorization)
     upd = {k: v for k, v in payload.dict().items() if v is not None}
     return await db.update_settings(upd)
+
+@router.post("/")
+async def update_settings_post(payload: SettingsUpdate, authorization: Optional[str] = Header(None)):
+    return await update_settings(payload, authorization)
 
 @router.get("/provider-config", response_model=ProviderConfig)
 async def get_provider_config(authorization: Optional[str] = Header(None)):
@@ -102,6 +125,7 @@ async def update_provider_config(payload: ProviderConfig, authorization: Optiona
 
 @router.get("/api-connections")
 async def get_api_connections(authorization: Optional[str] = Header(None)):
+    admin_user = await verify_admin_token(authorization)
     settings_data = await db.get_settings()
     storage_target = settings_data.get("api_storage_target") or "database"
     
@@ -145,27 +169,14 @@ async def get_api_connections(authorization: Optional[str] = Header(None)):
             "linkedin": {"client_id": db_creds.get("linkedin", {}).get("client_id", ""), "client_secret": db_creds.get("linkedin", {}).get("client_secret", "")},
         }
 
-    # Mask values
-    masked_api_keys = {
-        "openai": f"sk-...{openai_key[-4:]}" if openai_key else "",
-        "deepgram": f"dg-...{deepgram_key[-4:]}" if deepgram_key else "",
-        "elevenlabs": f"el-...{elevenlabs_key[-4:]}" if elevenlabs_key else "",
-    }
-    
-    masked_integration_creds = dict(integration_creds)
-    for plat in ["facebook", "spotify", "youtube", "tiktok", "twitter", "instagram", "linkedin"]:
-        plat_data = masked_integration_creds.get(plat) or {}
-        cid = plat_data.get("client_id", "")
-        csec = plat_data.get("client_secret", "")
-        masked_integration_creds[plat] = {
-            "client_id": cid,
-            "client_secret": f"[masked-{csec[-4:]}]" if csec else ""
-        }
-
     return {
         "api_storage_target": storage_target,
-        "api_keys": masked_api_keys,
-        "integration_credentials": masked_integration_creds
+        "api_keys": {
+            "openai": openai_key,
+            "deepgram": deepgram_key,
+            "elevenlabs": elevenlabs_key,
+        },
+        "integration_credentials": integration_creds
     }
 
 @router.post("/api-connections")
@@ -173,7 +184,7 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
     """
     Update API connections with validation of API keys
     """
-    user_id = await verify_token(authorization)
+    admin_user = await verify_admin_token(authorization)
     settings_data = await db.get_settings()
     current_storage_target = settings_data.get("api_storage_target") or "database"
     
@@ -182,9 +193,13 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
     from app.services.env_manager import read_env_file, update_env_file
     env_keys = read_env_file()
     
+    current_openai = env_keys.get("OPENAI_API_KEY", "") if current_storage_target == "env" else db_keys.get("openai", "")
+    current_deepgram = env_keys.get("DEEPGRAM_API_KEY", "") if current_storage_target == "env" else db_keys.get("deepgram", "")
+    current_elevenlabs = env_keys.get("ELEVENLABS_API_KEY", "") if current_storage_target == "env" else db_keys.get("elevenlabs", "")
+
     # Validate and resolve OpenAI API Key
-    openai_in = payload.api_keys.openai
-    if openai_in and not openai_in.startswith("sk-..."):
+    openai_in = payload.api_keys.openai or ""
+    if openai_in and openai_in != current_openai:
         is_valid, error_msg = await validate_api_key_format("openai", openai_in)
         if not is_valid:
             raise HTTPException(
@@ -192,14 +207,12 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
                 detail=f"Invalid OpenAI API key: {error_msg}"
             )
         openai_resolved = openai_in
-    elif openai_in and openai_in.startswith("sk-..."):
-        openai_resolved = env_keys.get("OPENAI_API_KEY", "") if current_storage_target == "env" else db_keys.get("openai", "")
     else:
-        openai_resolved = ""
+        openai_resolved = openai_in
         
     # Validate and resolve Deepgram API Key
-    deepgram_in = payload.api_keys.deepgram
-    if deepgram_in and not deepgram_in.startswith("dg-..."):
+    deepgram_in = payload.api_keys.deepgram or ""
+    if deepgram_in and deepgram_in != current_deepgram:
         is_valid, error_msg = await validate_api_key_format("deepgram", deepgram_in)
         if not is_valid:
             raise HTTPException(
@@ -207,14 +220,12 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
                 detail=f"Invalid Deepgram API key: {error_msg}"
             )
         deepgram_resolved = deepgram_in
-    elif deepgram_in and deepgram_in.startswith("dg-..."):
-        deepgram_resolved = env_keys.get("DEEPGRAM_API_KEY", "") if current_storage_target == "env" else db_keys.get("deepgram", "")
     else:
-        deepgram_resolved = ""
+        deepgram_resolved = deepgram_in
         
     # Validate and resolve Elevenlabs API Key
-    elevenlabs_in = payload.api_keys.elevenlabs
-    if elevenlabs_in and not elevenlabs_in.startswith("el-..."):
+    elevenlabs_in = payload.api_keys.elevenlabs or ""
+    if elevenlabs_in and elevenlabs_in != current_elevenlabs:
         is_valid, error_msg = await validate_api_key_format("elevenlabs", elevenlabs_in)
         if not is_valid:
             raise HTTPException(
@@ -222,10 +233,8 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
                 detail=f"Invalid ElevenLabs API key: {error_msg}"
             )
         elevenlabs_resolved = elevenlabs_in
-    elif elevenlabs_in and elevenlabs_in.startswith("el-..."):
-        elevenlabs_resolved = env_keys.get("ELEVENLABS_API_KEY", "") if current_storage_target == "env" else db_keys.get("elevenlabs", "")
     else:
-        elevenlabs_resolved = ""
+        elevenlabs_resolved = elevenlabs_in
 
     # Resolve Integration Credentials
     db_creds = settings_data.get("integration_credentials") or {}
@@ -242,16 +251,10 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
             
         client_id_in = plat_in.client_id or ""
         client_secret_in = plat_in.client_secret or ""
-        
-        # Check if secret is masked
-        if client_secret_in and client_secret_in.startswith("[masked"):
-            client_secret_resolved = env_keys.get(f"{plat.upper()}_CLIENT_SECRET", "") if current_storage_target == "env" else db_creds.get(plat, {}).get("client_secret", "")
-        else:
-            client_secret_resolved = client_secret_in
             
         resolved_integration_creds[plat] = {
             "client_id": client_id_in,
-            "client_secret": client_secret_resolved
+            "client_secret": client_secret_in
         }
 
     new_storage_target = payload.api_storage_target
@@ -267,6 +270,18 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
             "deepgram": deepgram_resolved,
             "elevenlabs": elevenlabs_resolved
         })
+        # Call env_manager to update env variables dynamically & survive restarts
+        env_updates = {
+            "OPENAI_API_KEY": openai_resolved,
+            "DEEPGRAM_API_KEY": deepgram_resolved,
+            "ELEVENLABS_API_KEY": elevenlabs_resolved,
+        }
+        for plat in platforms:
+            plat_data = resolved_integration_creds.get(plat) or {}
+            env_updates[f"{plat.upper()}_CLIENT_ID"] = plat_data.get("client_id", "")
+            env_updates[f"{plat.upper()}_CLIENT_SECRET"] = plat_data.get("client_secret", "")
+        update_env_file(env_updates)
+        
     elif new_storage_target == "env":
         # Save to Env file
         env_updates = {
@@ -289,6 +304,104 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
         })
 
     return {"message": "API Connections updated successfully", "api_storage_target": new_storage_target}
+
+@router.post("/test-provider")
+async def test_provider_connection(payload: TestProviderPayload, authorization: Optional[str] = Header(None)):
+    user_id = await verify_token(authorization)
+    
+    provider = payload.provider.lower()
+    api_key = payload.api_key.strip()
+    
+    # Resolve key if it's a masked placeholder
+    if api_key.startswith(("sk-...", "dg-...", "el-...")) or (api_key.startswith("[masked") and api_key.endswith("]")):
+        settings_data = await db.get_settings()
+        storage_target = settings_data.get("api_storage_target") or "database"
+        if storage_target == "database":
+            db_keys = await db.get_api_keys()
+            if provider == "openai":
+                api_key = db_keys.get("openai", "")
+            elif provider == "deepgram":
+                api_key = db_keys.get("deepgram", "")
+            elif provider == "elevenlabs":
+                api_key = db_keys.get("elevenlabs", "")
+        else:
+            if provider == "openai":
+                api_key = os.getenv("OPENAI_API_KEY", "")
+            elif provider == "deepgram":
+                api_key = os.getenv("DEEPGRAM_API_KEY", "")
+            elif provider == "elevenlabs":
+                api_key = os.getenv("ELEVENLABS_API_KEY", "")
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="API Key is missing or empty."
+        )
+
+    # Diagnostic client verification
+    if provider == "openai":
+        from openai import AsyncOpenAI
+        try:
+            client = AsyncOpenAI(api_key=api_key)
+            await client.models.list()
+            return {"status": "success", "message": "Connected successfully (200 OK)"}
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"OpenAI validation failed: {str(e)}"
+            )
+            
+    elif provider == "deepgram":
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.deepgram.com/v1/models",
+                    headers={"Authorization": f"Token {api_key}"},
+                    follow_redirects=True
+                )
+                if resp.status_code == 200:
+                    return {"status": "success", "message": "Connected successfully (200 OK)"}
+                else:
+                    detail_text = resp.text or f"HTTP {resp.status_code}"
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Deepgram validation failed: {detail_text}"
+                    )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Deepgram error: {str(e)}"
+            )
+
+    elif provider == "elevenlabs":
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.elevenlabs.io/v1/user",
+                    headers={"xi-api-key": api_key},
+                    follow_redirects=True
+                )
+                if resp.status_code == 200:
+                    return {"status": "success", "message": "Connected successfully (200 OK)"}
+                else:
+                    detail_text = resp.text or f"HTTP {resp.status_code}"
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"ElevenLabs validation failed: {detail_text}"
+                    )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"ElevenLabs error: {str(e)}"
+            )
+            
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported diagnostic provider: {provider}"
+        )
 
 @router.get("/connect/{platform}")
 async def connect_platform(platform: str, mode: str = "sandbox", origin: str = "http://localhost:5173", authorization: Optional[str] = Header(None)):
