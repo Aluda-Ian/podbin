@@ -32,13 +32,9 @@ def decrypt_key(enc_key: str) -> str:
         return ""
 
 # Configure MongoDB connection from environment URL
-MONGODB_URL = os.getenv("MONGODB_URL", "")
-if not MONGODB_URL:
-    DATABASE_URL = os.getenv("DATABASE_URL", "")
-    if DATABASE_URL.startswith("mongodb"):
-        MONGODB_URL = DATABASE_URL
-    else:
-        MONGODB_URL = "mongodb://localhost:27017"
+MONGODB_URL = os.getenv("MONGODB_URL", os.getenv("DATABASE_URL", ""))
+if not MONGODB_URL or not MONGODB_URL.startswith("mongodb"):
+    raise ValueError("A valid remote MongoDB URI (MONGODB_URL or DATABASE_URL) must be provided in the environment. Local daemon fallback is disabled.")
 
 # Parse database name from the URL or fall back to "podule"
 db_name = "podule"

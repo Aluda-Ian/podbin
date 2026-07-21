@@ -1,0 +1,45 @@
+name: Deploy to cPanel
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies & Build Frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
+      - name: Package Deployment Artifacts
+        run: |
+          mkdir -p deploy_dist/public_html
+          mkdir -p deploy_dist/podbin_backend
+          
+          # Copy backend files
+          cp -r backend/* deploy_dist/podbin_backend/
+          
+          # Copy frontend dist to public_html (where Apache/cPanel serves from)
+          # Make sure the .htaccess we created is included in the dist directory
+          cp -r frontend/dist/* deploy_dist/public_html/
+          cp frontend/public/.htaccess deploy_dist/public_html/.htaccess || true
+          
+      - name: Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./deploy_dist/
