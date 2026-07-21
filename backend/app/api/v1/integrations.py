@@ -264,3 +264,43 @@ async def integration_status() -> Dict[str, bool]:
             result[key] = False
 
     return result
+
+@router.delete("/{platform}")
+async def disconnect_integration(platform: str):
+    key = platform.lower()
+    
+    settings_data = await db.get_settings()
+    
+    # 1. Update the integrations status array
+    integrations = settings_data.get("integrations", [])
+    updated_integrations = []
+    platform_name = None
+    for item in integrations:
+        item_key = NAME_TO_KEY.get(item.get("name", ""))
+        if item_key == key:
+            platform_name = item.get("name")
+            updated_integrations.append({
+                "name": platform_name,
+                "status": "Disconnected",
+                "color": "text-muted"
+            })
+        else:
+            updated_integrations.append(item)
+            
+    # 2. Clear credentials for that platform
+    creds = settings_data.get("integration_credentials", {})
+    if key in creds:
+        # Keep client_id/client_secret but drop the tokens
+        if "tokens" in creds[key]:
+            creds[key]["tokens"] = {}
+        if "connected_at" in creds[key]:
+            del creds[key]["connected_at"]
+        if "mode" in creds[key]:
+            del creds[key]["mode"]
+            
+    await db.update_settings({
+        "integrations": updated_integrations,
+        "integration_credentials": creds
+    })
+    
+    return {"status": "success", "message": f"Disconnected {platform_name or platform}"}

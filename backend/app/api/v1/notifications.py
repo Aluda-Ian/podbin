@@ -31,3 +31,30 @@ async def mark_all_read(authorization: Optional[str] = Header(None)):
     user_id = await verify_token(authorization)
     count = await db.mark_all_notifications_read(user_id)
     return {"status": "ok", "marked": count}
+
+from pydantic import BaseModel
+
+class PushNotificationPayload(BaseModel):
+    user_id: Optional[str] = None
+    type: str = "info"
+    title: str
+    message: str
+    action_url: Optional[str] = None
+    episode_id: Optional[str] = None
+
+@router.post("/push")
+async def push_notification(payload: PushNotificationPayload, authorization: Optional[str] = Header(None)):
+    user_id = await verify_token(authorization)
+    target_user_id = payload.user_id or user_id
+    
+    n = await db.create_notification({
+        "user_id": target_user_id,
+        "type": payload.type,
+        "title": payload.title,
+        "message": payload.message,
+        "action_url": payload.action_url,
+        "episode_id": payload.episode_id,
+        "read": False
+    })
+    
+    return {"status": "success", "notification": n}

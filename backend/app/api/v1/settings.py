@@ -169,12 +169,17 @@ async def get_api_connections(authorization: Optional[str] = Header(None)):
             "linkedin": {"client_id": db_creds.get("linkedin", {}).get("client_id", ""), "client_secret": db_creds.get("linkedin", {}).get("client_secret", "")},
         }
 
+    def mask(k):
+        if not k: return ""
+        if len(k) > 8: return f"{k[:3]}...{k[-4:]}"
+        return "[masked]"
+
     return {
         "api_storage_target": storage_target,
         "api_keys": {
-            "openai": openai_key,
-            "deepgram": deepgram_key,
-            "elevenlabs": elevenlabs_key,
+            "openai": mask(openai_key),
+            "deepgram": mask(deepgram_key),
+            "elevenlabs": mask(elevenlabs_key),
         },
         "integration_credentials": integration_creds
     }
@@ -305,7 +310,7 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
 
     return {"message": "API Connections updated successfully", "api_storage_target": new_storage_target}
 
-@router.post("/test-provider")
+@router.post("/test-connection")
 async def test_provider_connection(payload: TestProviderPayload, authorization: Optional[str] = Header(None)):
     user_id = await verify_token(authorization)
     
@@ -344,7 +349,7 @@ async def test_provider_connection(payload: TestProviderPayload, authorization: 
         try:
             client = AsyncOpenAI(api_key=api_key)
             await client.models.list()
-            return {"status": "success", "message": "Connected successfully (200 OK)"}
+            return {"success": True, "message": "Connection verified"}
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -361,7 +366,7 @@ async def test_provider_connection(payload: TestProviderPayload, authorization: 
                     follow_redirects=True
                 )
                 if resp.status_code == 200:
-                    return {"status": "success", "message": "Connected successfully (200 OK)"}
+                    return {"success": True, "message": "Connection verified"}
                 else:
                     detail_text = resp.text or f"HTTP {resp.status_code}"
                     raise HTTPException(
@@ -384,7 +389,7 @@ async def test_provider_connection(payload: TestProviderPayload, authorization: 
                     follow_redirects=True
                 )
                 if resp.status_code == 200:
-                    return {"status": "success", "message": "Connected successfully (200 OK)"}
+                    return {"success": True, "message": "Connection verified"}
                 else:
                     detail_text = resp.text or f"HTTP {resp.status_code}"
                     raise HTTPException(
@@ -403,84 +408,5 @@ async def test_provider_connection(payload: TestProviderPayload, authorization: 
             detail=f"Unsupported diagnostic provider: {provider}"
         )
 
-@router.get("/connect/{platform}")
-async def connect_platform(platform: str, mode: str = "sandbox", origin: str = "http://localhost:5173", authorization: Optional[str] = Header(None)):
-    platform_key = platform.lower()
-    settings_data = await db.get_settings()
-    creds = settings_data.get("integration_credentials", {})
-    plat_creds = creds.get(platform_key, {}) or {}
-    
-    # Try database value, fallback to environment variable
-    client_id = plat_creds.get("client_id") or os.getenv(f"{platform_key.upper()}_CLIENT_ID")
-    
-    if mode == "live":
-        if platform_key == "facebook":
-            cid = client_id or os.getenv("FACEBOOK_CLIENT_ID") or "483920194830201"
-            callback_url = f"http://localhost:8000/api/v1/settings/callback/facebook?origin={origin}&mode=live"
-            encoded_callback = urllib.parse.quote(callback_url)
-            fb_oauth_url = (
-                f"https://www.facebook.com/v19.0/dialog/oauth"
-                f"?client_id={cid}"
-                f"&redirect_uri={encoded_callback}"
-                f"&state=facebook"
-                f"&scope=pages_manage_posts,pages_read_engagement"
-            )
-            return RedirectResponse(url=fb_oauth_url)
-        else:
-            callback_url = f"http://localhost:8000/api/v1/settings/callback/{platform}?origin={origin}&mode=live"
-            return RedirectResponse(url=callback_url)
-    else:
-        callback_url = f"http://localhost:8000/api/v1/settings/callback/{platform}?origin={origin}&mode=sandbox"
-        return RedirectResponse(url=callback_url)
 
-@router.get("/callback/{platform}")
-async def callback_platform(
-    platform: str,
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    mode: str = "sandbox",
-    origin: str = "http://localhost:5173"
-):
-    platform_map = {
-        "facebook": "Facebook",
-        "spotify": "Spotify for Podcasters",
-        "apple": "Apple Podcasts Connect",
-        "youtube": "YouTube Studio",
-        "tiktok": "TikTok for Business",
-        "twitter": "X / Twitter",
-        "substack": "Substack",
-        "linkedin": "LinkedIn",
-        "instagram": "Instagram"
-    }
-    
-    platform_key = platform.lower()
-    platform_name = platform_map.get(platform_key, platform.capitalize())
-    
-    settings_data = await db.get_settings()
-    integrations = settings_data.get("integrations", [])
-    
-    status_label = "Connected (Live)" if mode == "live" else "Connected (Sandbox)"
-    
-    exists = False
-    new_integrations = []
-    for item in integrations:
-        if item.get("name") == platform_name:
-            new_integrations.append({
-                "name": platform_name,
-                "status": status_label,
-                "color": "text-success"
-            })
-            exists = True
-        else:
-            new_integrations.append(item)
-            
-    if not exists:
-        new_integrations.append({
-            "name": platform_name,
-            "status": status_label,
-            "color": "text-success"
-        })
-        
-    await db.update_settings({"integrations": new_integrations})
-    return RedirectResponse(url=f"{origin}/settings?connected={platform_name}")
 
