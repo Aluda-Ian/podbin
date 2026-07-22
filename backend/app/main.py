@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 from pathlib import Path
+import os
 
 from app.core.config import settings
 from app.api.v1.episodes import router as episodes_router
@@ -43,6 +45,11 @@ static_dir = Path("static")
 static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+# Serve compiled frontend assets
+public_dir = Path("public")
+public_dir.mkdir(exist_ok=True)
+app.mount("/assets", StaticFiles(directory="public/assets"), name="assets")
+
 # Basic health-check endpoint
 @app.get("/health", status_code=200)
 async def health_check():
@@ -61,3 +68,11 @@ app.include_router(admin_router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(distribution_router, prefix="/api/v1/distribution", tags=["distribution"])
 app.include_router(integrations_router, prefix="/api/v1/integrations", tags=["integrations"])
 app.include_router(notifications_router, prefix="/api/v1/notifications", tags=["Notifications"])
+
+# SPA Catch-all route (must be at the very bottom)
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    index_path = os.path.join("public", "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return {"error": "Frontend build not found"}

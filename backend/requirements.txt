@@ -13,3 +13,5 @@ PyJWT>=2.8.0
 httpx>=0.25.0
 faster-whisper>=1.0.0
 a2wsgi>=1.10.0
+pyotp>=2.9.0
+qrcode>=7.4.2

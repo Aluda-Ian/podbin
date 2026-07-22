@@ -121,6 +121,23 @@ class BeanieDatabaseService:
                 Notification
             ]
         )
+        
+        # Seed default super admin
+        admin_user = await User.find_one(User.email == "info@vendatechnologies.com")
+        if not admin_user:
+            from app.core.security import hash_password
+            all_users = await User.find_all().to_list()
+            new_admin = User(
+                id=f"user-{len(all_users) + 1}",
+                name="Ian Aluda",
+                email="info@vendatechnologies.com",
+                role="Super Admin",
+                password=hash_password("@Munangwe212"),
+                podcast_ids=["*"],
+                suspended=False,
+                is_verified=True
+            )
+            await new_admin.insert()
 
     def _ensure_defaults(self, ep: Dict[str, Any]):
         if "status" not in ep or ep["status"] is None:

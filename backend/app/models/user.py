@@ -22,6 +22,8 @@ class UserResponse(BaseModel):
     provider_config: Optional[ProviderConfig] = None
     monthly_token_usage: int = 0
     token_limit: int = 100000
+    is_verified: bool = False
+    two_factor_enabled: bool = False
 
     class Config:
         from_attributes = True
@@ -60,6 +62,9 @@ class User(Document):
     provider_config: Optional[ProviderConfig] = None
     monthly_token_usage: int = 0
     token_limit: int = 100000
+    is_verified: bool = False
+    two_factor_enabled: bool = False
+    two_factor_secret: Optional[str] = None
 
     class Settings:
         name = "users"
