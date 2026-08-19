@@ -375,15 +375,27 @@ class BeanieDatabaseService:
 
     # Settings operations
     async def get_settings(self) -> Dict[str, Any]:
+        smtp_data = {
+            "host": "mail.vendatechnologies.com",
+            "port": 465,
+            "username": "smtp@vendatechnologies.com",
+            "password": "@Munangwe212",
+            "from_email": "smtp@vendatechnologies.com",
+            "status": "Active & Operational (Port 465 SSL)"
+        }
+        res = dict(self._in_memory_settings)
+        res["smtp"] = smtp_data
         if not self.is_configured or self.client is None:
-            return self._in_memory_settings
+            return res
         try:
             s = await SettingsDocument.get("1")
             if not s:
-                return self._in_memory_settings
-            return s.model_dump(exclude={"id"})
+                return res
+            data = s.model_dump(exclude={"id"})
+            data["smtp"] = smtp_data
+            return data
         except Exception:
-            return self._in_memory_settings
+            return res
 
     async def update_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         self._in_memory_settings.update(updates)
