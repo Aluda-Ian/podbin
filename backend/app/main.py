@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 import os
+import mimetypes
 
 from app.core.config import settings
 from app.api.v1.episodes import router as episodes_router
@@ -158,7 +159,9 @@ async def serve_spa(full_path: str):
     if full_path.startswith("assets/") or full_path.startswith("logos/") or full_path.startswith("static/") or "." in Path(full_path).name:
         asset_file = find_file_in_candidates(full_path)
         if asset_file:
-            return FileResponse(str(asset_file))
+            mime_type, _ = mimetypes.guess_type(str(asset_file))
+            return FileResponse(str(asset_file), media_type=mime_type or "application/octet-stream")
+        raise HTTPException(status_code=404, detail=f"Asset '{full_path}' not found")
 
     # Serve index.html from disk if available
     index_file = find_file_in_candidates("index.html")

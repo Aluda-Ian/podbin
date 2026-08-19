@@ -32,7 +32,8 @@
       "dest": "/api/index.py"
     },
     {
-      "handle": "filesystem"
+      "src": "/assets/(.*)",
+      "dest": "/api/index.py"
     },
     {
       "src": "/(.*)",
