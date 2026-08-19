@@ -139,6 +139,26 @@ class BeanieDatabaseService:
             )
             await new_admin.insert()
 
+        # Seed initial completed agent activity notifications
+        existing_notifs = await Notification.find_all().to_list()
+        if not existing_notifs:
+            initial_agent_logs = [
+                ("AGENT_RESEARCH", "Drafting talking points for Andrej K. — Ep. 144"),
+                ("AGENT_BOOKING", "Confirmed Sarah Chen for Tue 14:00 UTC"),
+                ("AGENT_PROD", "De-essing vocal track on segment 04"),
+                ("AGENT_REPURPOSE", "Generated 6 vertical clips from Ep. 142"),
+                ("AGENT_DISTRO", "Pushed to Spotify, Apple, YouTube — syndication 100%"),
+                ("AGENT_RESEARCH", "Indexing 23 source articles for Climate Tech pivot")
+            ]
+            for tag, msg in initial_agent_logs:
+                await Notification(
+                    user_id="user-1",
+                    type="success",
+                    title=tag,
+                    message=msg,
+                    read=False
+                ).insert()
+
     def _ensure_defaults(self, ep: Dict[str, Any]):
         if "status" not in ep or ep["status"] is None:
             ep["status"] = "PENDING_REVIEW"
@@ -441,5 +461,17 @@ class BeanieDatabaseService:
 
     async def get_unread_count(self, user_id: str) -> int:
         return await Notification.find(Notification.user_id == user_id, Notification.read == False).count()
+
+    async def notify_agent_completion(self, agent_tag: str, message: str, user_id: str = "user-1", episode_id: Optional[str] = None) -> Dict[str, Any]:
+        """Record an agent completion event as a persistent system notification."""
+        notif_data = {
+            "user_id": user_id,
+            "type": "success",
+            "title": agent_tag,
+            "message": message,
+            "episode_id": episode_id,
+            "read": False
+        }
+        return await self.create_notification(notif_data)
 
 db = BeanieDatabaseService()

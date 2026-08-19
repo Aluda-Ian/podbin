@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
-from beanie import Document
+from typing import List, Optional, Union
+from beanie import Document, PydanticObjectId
 from enum import Enum
 
 class ProviderTier(str, Enum):

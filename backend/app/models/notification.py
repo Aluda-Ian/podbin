@@ -1,10 +1,10 @@
-from beanie import Document
+from beanie import Document, PydanticObjectId
 from pydantic import Field
-from typing import Optional
+from typing import Optional, Union
 from datetime import datetime
 
 class Notification(Document):
-    id: str = Field(default=None)
+    id: Optional[Union[PydanticObjectId, str]] = Field(default=None)
     user_id: str
     type: str  # "success" | "error" | "warning" | "info"
     title: str
@@ -16,3 +16,4 @@ class Notification(Document):
 
     class Settings:
         name = "notifications"
+

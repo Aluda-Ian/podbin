@@ -16,6 +16,7 @@ from app.api.v1.admin import router as admin_router
 from app.api.v1.distribution import router as distribution_router
 from app.api.v1.integrations import router as integrations_router
 from app.api.v1.notifications import router as notifications_router
+from app.api.v1.copilot import router as copilot_router
 from app.services.db import db
 
 @asynccontextmanager
@@ -40,10 +41,25 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_no_cache_header(request, call_next):
+    response = await call_next(request)
+    path = request.url.path.lower()
+    if path.startswith("/assets") or path in ["/", "/dashboard", "/admin"]:
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # Mount static files folder dynamically for EDL edits
 static_dir = Path("static")
 static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Mount logos directory
+logos_dir = Path("public/logos")
+logos_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/logos", StaticFiles(directory="public/logos"), name="logos")
 
 # Serve compiled frontend assets
 public_dir = Path("public")
@@ -68,6 +84,7 @@ app.include_router(admin_router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(distribution_router, prefix="/api/v1/distribution", tags=["distribution"])
 app.include_router(integrations_router, prefix="/api/v1/integrations", tags=["integrations"])
 app.include_router(notifications_router, prefix="/api/v1/notifications", tags=["Notifications"])
+app.include_router(copilot_router, prefix="/api/v1/copilot", tags=["copilot"])
 
 # SPA Catch-all route (must be at the very bottom)
 @app.get("/{full_path:path}")
