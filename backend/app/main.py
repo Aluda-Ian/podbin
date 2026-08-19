@@ -75,7 +75,8 @@ app.mount("/assets", StaticFiles(directory=public_dir / "assets"), name="assets"
 async def health_check():
     return {
         "status": "healthy",
-        "service": settings.PROJECT_NAME
+        "service": settings.PROJECT_NAME,
+        "database_configured": db.is_configured,
     }
 
 # Register routes with version prefix

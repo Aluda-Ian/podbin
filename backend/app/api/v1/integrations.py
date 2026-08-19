@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from typing import Dict, Any, Optional
 from app.services.db import db
+from app.core.config import settings
 from datetime import datetime
 import secrets
 import os
