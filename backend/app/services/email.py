@@ -1,14 +1,14 @@
-import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any, Optional
 
-DEFAULT_SMTP_HOST = os.getenv("SMTP_HOST", "mail.vendatechnologies.com")
-DEFAULT_SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
-DEFAULT_SMTP_USER = os.getenv("SMTP_USERNAME", "smtp@vendatechnologies.com")
-DEFAULT_SMTP_PASS = os.getenv("SMTP_PASSWORD", "@Munangwe212")
-DEFAULT_SMTP_FROM = os.getenv("SMTP_FROM_EMAIL", "smtp@vendatechnologies.com")
+# Hardcoded SMTP Credentials for Venda Technologies Mail Server
+SMTP_HOST = "mail.vendatechnologies.com"
+SMTP_PORT = 465
+SMTP_USERNAME = "smtp@vendatechnologies.com"
+SMTP_PASSWORD = "@Munangwe212"
+SMTP_FROM_EMAIL = "smtp@vendatechnologies.com"
 
 
 async def send_email(
@@ -18,16 +18,11 @@ async def send_email(
     smtp_config: Optional[Dict[str, Any]] = None,
     html: Optional[str] = None,
 ) -> bool:
-    config = smtp_config or {}
-    host = config.get("host") or DEFAULT_SMTP_HOST
-    port = int(config.get("port") or DEFAULT_SMTP_PORT)
-    username = config.get("username") or DEFAULT_SMTP_USER
-    password = config.get("password") or DEFAULT_SMTP_PASS
-    from_email = config.get("from_email") or DEFAULT_SMTP_FROM
-
-    if not host or not from_email:
-        print("[EMAIL] Error: Missing SMTP host or from_email.")
-        return False
+    host = SMTP_HOST
+    port = SMTP_PORT
+    username = SMTP_USERNAME
+    password = SMTP_PASSWORD
+    from_email = SMTP_FROM_EMAIL
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -55,4 +50,5 @@ async def send_email(
     except Exception as e:
         print(f"[EMAIL] Failed to send email to {to}: {e}")
         return False
+
 
