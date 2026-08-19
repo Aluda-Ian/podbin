@@ -58,24 +58,14 @@ class MetadataRequest(BaseModel):
 @router.get("", response_model=List[EpisodeResponse])
 @router.get("/", response_model=List[EpisodeResponse])
 async def get_episodes():
-    episodes = await Episode.find_all().to_list()
-    out = []
-    for ep in episodes:
-        ep_dict = ep.model_dump()
-        ep_dict["id"] = ep.id
-        db._ensure_defaults(ep_dict)
-        out.append(ep_dict)
-    return out
+    return await db.get_episodes()
 
 @router.get("/{episode_id}", response_model=EpisodeResponse)
 async def get_episode(episode_id: str):
-    ep = await Episode.get(episode_id)
+    ep = await db.get_episode(episode_id)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
-    ep_dict = ep.model_dump()
-    ep_dict["id"] = ep.id
-    db._ensure_defaults(ep_dict)
-    return ep_dict
+    return ep
 
 @router.post("", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
@@ -191,22 +181,18 @@ async def create_episode(
     except Exception as e:
         print(f"LangGraph execution failed: {e}")
 
-    all_eps = await Episode.find_all().to_list()
+    all_eps = await db.get_episodes()
     existing_ids = []
     for ep in all_eps:
         try:
-            num = int(ep.id.split("-")[1])
+            num = int(ep["id"].split("-")[1])
             existing_ids.append(num)
         except Exception:
             pass
     next_num = max(existing_ids) + 1 if existing_ids else 1
     new_ep["id"] = f"EP-{next_num}"
     
-    db._ensure_defaults(new_ep)
-    added_ep_doc = Episode(**new_ep)
-    await added_ep_doc.insert()
-    added_ep = added_ep_doc.model_dump()
-    added_ep["id"] = added_ep_doc.id
+    added_ep = await db.add_episode(new_ep)
     
     import uuid
     appr_id = f"appr-{str(uuid.uuid4())[:8]}"
@@ -238,24 +224,16 @@ async def ingest_episode(
 @router.put("/{episode_id}", response_model=EpisodeResponse)
 async def update_episode(episode_id: str, updates: EpisodeUpdate):
     upd = {k: v for k, v in updates.model_dump().items() if v is not None}
-    ep = await Episode.get(episode_id)
+    ep = await db.update_episode(episode_id, upd)
     if not ep:
         raise HTTPException(status_code=404, detail="Episode not found")
-    for k, v in upd.items():
-        if hasattr(ep, k):
-            setattr(ep, k, v)
-    await ep.save()
-    ep_dict = ep.model_dump()
-    ep_dict["id"] = ep.id
-    db._ensure_defaults(ep_dict)
-    return ep_dict
+    return ep
 
 @router.delete("/{episode_id}")
 async def delete_episode(episode_id: str):
-    ep = await Episode.get(episode_id)
-    if not ep:
+    res = await db.delete_episode(episode_id)
+    if not res:
         raise HTTPException(status_code=404, detail="Episode not found")
-    await ep.delete()
     return {"message": f"Episode {episode_id} deleted successfully"}
 
 
