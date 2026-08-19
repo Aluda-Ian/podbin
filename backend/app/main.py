@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 import os
 
 from app.core.config import settings
@@ -19,7 +20,50 @@ from app.api.v1.notifications import router as notifications_router
 from app.api.v1.copilot import router as copilot_router
 from app.services.db import db
 
+DEFAULT_INDEX_HTML = """<!DOCTYPE html><html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="/assets/styles-BiabKEYy.css" data-precedence="default"/><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,100..900;1,100..900&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" data-precedence="default"/><title>podule — Autonomous Podcast Operations</title><meta name="description" content="podule is the agentic AI operating system for podcasters. Autonomous research, production, and distribution — with human-in-the-loop control."/><meta name="author" content="podule"/><meta property="og:title" content="podule — Autonomous Podcast Operations"/><meta property="og:description" content="Stop managing your podcast. Start scaling it. podule orchestrates research, production, and distribution autonomously."/><meta property="og:type" content="website"/><meta name="twitter:card" content="summary"/><link rel="modulepreload" href="/assets/index-B1NRAZfl.js"/><link rel="modulepreload" href="/assets/jsx-runtime-bzQ4Vb5N.js"/><link rel="modulepreload" href="/assets/react-dom-DUKFG4MT.js"/><link rel="modulepreload" href="/assets/link-CVkLs2P8.js"/><link rel="modulepreload" href="/assets/createLucideIcon-DeQrcgrh.js"/><link rel="modulepreload" href="/assets/routes-CUzeY4A9.js"/><link rel="modulepreload" href="/assets/chevron-right-BYJJVHf4.js"/><link rel="modulepreload" href="/assets/cpu-CHN-xGLC.js"/><link rel="modulepreload" href="/assets/volume-2-Ds1m7MT4.js"/><link rel="preconnect" href="https://fonts.googleapis.com"/><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"/><script>(function(){const stored=localStorage.getItem('podule-theme');const theme=stored||'light';if(theme==='dark'){document.documentElement.classList.add('dark');}else{document.documentElement.classList.remove('dark');}})();</script></head><body><div class="flex h-screen w-screen items-center justify-center bg-background"><div class="h-8 w-8 animate-spin rounded-full border-4 border-accent border-t-transparent"></div></div><section aria-label="Notifications alt+T" tabindex="-1" aria-live="polite" aria-relevant="additions text" aria-atomic="false"></section><script class="$tsr" id="$tsr-stream-barrier">(self.$R=self.$R||{})["tsr"]=[];self.$_TSR={h(){this.hydrated=!0,this.c()},e(){this.streamEnded=!0,this.c()},c(){this.hydrated&&this.streamEnded&&(delete self.$_TSR,delete self.$R.tsr)},p(e){this.initialized?e():this.buffer.push(e)},buffer:[]};$_TSR.router=($R=>$R[0]={manifest:$R[1]={routes:$R[2]={__root__:$R[3]={preloads:$R[4]=["/assets/index-B1NRAZfl.js","/assets/jsx-runtime-bzQ4Vb5N.js","/assets/react-dom-DUKFG4MT.js","/assets/link-CVkLs2P8.js","/assets/createLucideIcon-DeQrcgrh.js"],scripts:$R[5]=[$R[6]={attrs:$R[7]={type:"module",async:!0,src:"/assets/index-B1NRAZfl.js"}}]}}},matches:$R[8]=[$R[9]={i:"__root__ ",u:1784703960298,s:"success",ssr:!0}],lastMatchId:"__root__ "})($R["tsr"]);$_TSR.e();document.currentScript.remove()</script><script type="module" async="" src="/assets/index-B1NRAZfl.js"></script><script src="/assets/copilot_widget.js"></script></body></html>"""
+
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+
+def find_file_in_candidates(relative_path: str) -> Optional[Path]:
+    rel = relative_path.lstrip("/")
+    candidates = []
+    
+    cwd = Path.cwd()
+    candidates.append(cwd / "public" / rel)
+    candidates.append(cwd / "backend" / "public" / rel)
+
+    p1 = Path(__file__)
+    for parent in p1.parents:
+        candidates.append(parent / "public" / rel)
+        candidates.append(parent / "backend" / "public" / rel)
+
+    try:
+        p2 = Path(__file__).resolve()
+        for parent in p2.parents:
+            candidates.append(parent / "public" / rel)
+            candidates.append(parent / "backend" / "public" / rel)
+    except Exception:
+        pass
+
+    candidates.extend([
+        Path("/var/task/public") / rel,
+        Path("/var/task/backend/public") / rel,
+        Path("/var/task/api/public") / rel,
+    ])
+
+    for c in candidates:
+        try:
+            if c.exists() and c.is_file():
+                return c
+        except Exception:
+            pass
+    return None
+
+def find_public_dir() -> Path:
+    found_index = find_file_in_candidates("index.html")
+    if found_index:
+        return found_index.parent
+    return Path.cwd() / "public"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,44 +101,6 @@ async def add_no_cache_header(request, call_next):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
-
-def find_public_dir() -> Path:
-    candidates = []
-    
-    # Check all parents of __file__ (unresolved)
-    p1 = Path(__file__)
-    for parent in p1.parents:
-        candidates.append(parent / "public")
-        candidates.append(parent / "backend" / "public")
-
-    # Check all parents of __file__ (resolved)
-    try:
-        p2 = Path(__file__).resolve()
-        for parent in p2.parents:
-            candidates.append(parent / "public")
-            candidates.append(parent / "backend" / "public")
-    except Exception:
-        pass
-
-    # Common runtime directories
-    cwd = Path.cwd()
-    candidates.extend([
-        cwd / "public",
-        cwd / "backend" / "public",
-        cwd / "api" / "public",
-        Path("/var/task/public"),
-        Path("/var/task/backend/public"),
-        Path("/var/task/api/public"),
-    ])
-
-    for c in candidates:
-        try:
-            if (c / "index.html").exists():
-                return c
-        except Exception:
-            pass
-
-    return Path.cwd() / "public"
 
 public_dir = find_public_dir()
 
@@ -147,21 +153,17 @@ app.include_router(copilot_router, prefix="/api/v1/copilot", tags=["copilot"])
 async def serve_spa(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API endpoint not found")
-    pub_dir = find_public_dir()
-    index_path = pub_dir / "index.html"
-    if index_path.exists():
-        return FileResponse(str(index_path), media_type="text/html")
-    
-    # Check fallback index.html paths directly
-    for candidate in [
-        BACKEND_DIR / "public" / "index.html",
-        BACKEND_DIR.parent / "public" / "index.html",
-        Path("public/index.html"),
-        Path("backend/public/index.html"),
-        Path("/var/task/public/index.html"),
-        Path("/var/task/backend/public/index.html")
-    ]:
-        if candidate.exists():
-            return FileResponse(str(candidate), media_type="text/html")
+        
+    # Check if asking for a static asset file
+    if full_path.startswith("assets/") or full_path.startswith("logos/") or full_path.startswith("static/") or "." in Path(full_path).name:
+        asset_file = find_file_in_candidates(full_path)
+        if asset_file:
+            return FileResponse(str(asset_file))
 
-    return {"error": "Frontend build not found"}
+    # Serve index.html from disk if available
+    index_file = find_file_in_candidates("index.html")
+    if index_file:
+        return FileResponse(str(index_file), media_type="text/html")
+
+    # Embedded HTML fallback
+    return HTMLResponse(content=DEFAULT_INDEX_HTML, media_type="text/html")
