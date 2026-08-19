@@ -411,15 +411,24 @@ class BeanieDatabaseService:
 
     # Approvals operations
     async def get_approvals(self) -> List[Dict[str, Any]]:
-        if not self.is_configured or self.client is None:
-            return self._in_memory_approvals
-        try:
-            approvals = await Approval.find(Approval.status == "PENDING").to_list()
-            return [{"id": appr.id, **appr.model_dump()} for appr in approvals]
-        except Exception:
-            return self._in_memory_approvals
+        await self.ensure_db_initialized()
+        mongo_approvals = []
+        if self.is_configured and self.client is not None:
+            try:
+                approvals = await Approval.find(Approval.status == "PENDING").to_list()
+                mongo_approvals = [{"id": appr.id, **appr.model_dump()} for appr in approvals]
+            except Exception:
+                pass
+        
+        combined = list(mongo_approvals)
+        mongo_ids = {a["id"] for a in mongo_approvals if "id" in a}
+        for a in self._in_memory_approvals:
+            if a.get("id") not in mongo_ids:
+                combined.append(a)
+        return combined
 
     async def action_approval(self, approval_id: str, action: str, updated_content: str = None) -> Optional[Dict[str, Any]]:
+        await self.ensure_db_initialized()
         if not self.is_configured or self.client is None:
             for a in self._in_memory_approvals:
                 if a.get("id") == approval_id:
@@ -447,26 +456,25 @@ class BeanieDatabaseService:
             return None
 
     async def add_approval(self, appr_dict: Dict[str, Any]) -> Dict[str, Any]:
-        if not self.is_configured or self.client is None:
-            self._in_memory_approvals.append(appr_dict)
-            return appr_dict
-        try:
-            db_appr = Approval(
-                id=appr_dict["id"],
-                podcast_id=appr_dict.get("podcast_id", "podcast-1"),
-                type=appr_dict["type"],
-                title=appr_dict["title"],
-                quote=appr_dict["quote"],
-                meta=appr_dict["meta"],
-                priority=appr_dict.get("priority", "medium"),
-                agent=appr_dict.get("agent", "System"),
-                status=appr_dict.get("status", "PENDING")
-            )
-            await db_appr.insert()
-            return appr_dict
-        except Exception:
-            self._in_memory_approvals.append(appr_dict)
-            return appr_dict
+        await self.ensure_db_initialized()
+        self._in_memory_approvals.append(appr_dict)
+        if self.is_configured and self.client is not None:
+            try:
+                db_appr = Approval(
+                    id=appr_dict["id"],
+                    podcast_id=appr_dict.get("podcast_id", "podcast-1"),
+                    type=appr_dict["type"],
+                    title=appr_dict["title"],
+                    quote=appr_dict["quote"],
+                    meta=appr_dict["meta"],
+                    priority=appr_dict.get("priority", "medium"),
+                    agent=appr_dict.get("agent", "System"),
+                    status=appr_dict.get("status", "PENDING")
+                )
+                await db_appr.insert()
+            except Exception as e:
+                print(f"MongoDB add_approval notice: {e}")
+        return appr_dict
 
     # Agents operations
     async def get_agents(self) -> List[Dict[str, Any]]:

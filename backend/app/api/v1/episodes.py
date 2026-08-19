@@ -190,18 +190,21 @@ async def create_episode(
     
     added_ep = await db.add_episode(new_ep)
     
-    import uuid
-    appr_id = f"appr-{str(uuid.uuid4())[:8]}"
-    await db.add_approval({
-        "id": appr_id,
-        "type": "SHOW_NOTES",
-        "title": f"Markdown · {added_ep['id']}",
-        "quote": f"Summary for {added_ep['title']}: {added_ep['note']}",
-        "meta": f"Generated just now for {added_ep['guest']}",
-        "priority": "medium",
-        "agent": "Research Agent",
-        "status": "PENDING"
-    })
+    try:
+        import uuid
+        appr_id = f"appr-{str(uuid.uuid4())[:8]}"
+        await db.add_approval({
+            "id": appr_id,
+            "type": "SHOW_NOTES",
+            "title": f"Markdown · {added_ep['id']}",
+            "quote": f"Summary for {added_ep['title']}: {added_ep['note']}",
+            "meta": f"Generated just now for {added_ep['guest']}",
+            "priority": "medium",
+            "agent": "Research Agent",
+            "status": "PENDING"
+        })
+    except Exception as appr_err:
+        print(f"Approval creation notice: {appr_err}")
 
     return added_ep
 
