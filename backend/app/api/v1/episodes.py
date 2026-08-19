@@ -67,6 +67,22 @@ async def get_episode(episode_id: str):
         raise HTTPException(status_code=404, detail="Episode not found")
     return ep
 
+def get_youtube_embed_url(url: str) -> Optional[str]:
+    if not url:
+        return None
+    import re
+    patterns = [
+        r'v=([0-9A-Za-z_-]{11})',
+        r'youtu\.be\/([0-9A-Za-z_-]{11})',
+        r'youtube\.com\/embed\/([0-9A-Za-z_-]{11})',
+        r'youtube\.com\/shorts\/([0-9A-Za-z_-]{11})'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return f"https://www.youtube.com/embed/{match.group(1)}"
+    return url
+
 @router.post("", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 async def create_episode(
@@ -107,6 +123,9 @@ async def create_episode(
         url_lower = url.lower()
         if any(domain in url_lower for domain in ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "video"]) or any(url_lower.endswith(ext) for ext in [".mp4", ".mov", ".webm", ".mkv", ".avi", ".m3u8"]):
             is_video = True
+            yt_embed = get_youtube_embed_url(url)
+            if yt_embed:
+                media_path_or_url = yt_embed
     
     if not media_path_or_url:
         raise HTTPException(

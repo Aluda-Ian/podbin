@@ -138,8 +138,31 @@ class BeanieDatabaseService:
                 "is_verified": True
             }
         ]
-        self._in_memory_episodes = []
+        self._in_memory_episodes = self._load_episodes_from_file()
         self._in_memory_approvals = []
+
+    def _load_episodes_from_file(self) -> List[Dict[str, Any]]:
+        file_path = Path("static") / "episodes_data.json"
+        if file_path.exists():
+            try:
+                import json
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return data
+            except Exception as e:
+                print(f"Error loading episodes file: {e}")
+        return []
+
+    def _save_episodes_to_file(self):
+        try:
+            import json
+            file_path = Path("static") / "episodes_data.json"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(self._in_memory_episodes, f, indent=2, default=str)
+        except Exception as e:
+            print(f"Error saving episodes file: {e}")
         self._in_memory_agents = [
             {"name": "Research Agent", "role": "Research & Intelligence", "status": "idle", "task": "Idle", "tasksToday": 14, "success": 98},
             {"name": "Booking Agent", "role": "Guest Outreach", "status": "idle", "task": "Idle", "tasksToday": 8, "success": 95},
@@ -260,56 +283,59 @@ class BeanieDatabaseService:
             episode["id"] = f"EP-{len(self._in_memory_episodes) + 1}"
         self._ensure_defaults(episode)
         
-        if not self.is_configured or self.client is None:
+        # Always maintain in-memory list and write to disk file
+        existing_idx = next((i for i, ep in enumerate(self._in_memory_episodes) if ep.get("id") == episode["id"]), None)
+        if existing_idx is not None:
+            self._in_memory_episodes[existing_idx] = episode
+        else:
             self._in_memory_episodes.append(episode)
-            return episode
-        try:
-            db_ep = Episode(**episode)
-            await db_ep.insert()
-            return episode
-        except Exception:
-            self._in_memory_episodes.append(episode)
-            return episode
+        self._save_episodes_to_file()
+        
+        if self.is_configured and self.client is not None:
+            try:
+                db_ep = Episode(**episode)
+                await db_ep.insert()
+            except Exception:
+                pass
+        return episode
 
     async def update_episode(self, episode_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        if not self.is_configured or self.client is None:
-            for ep in self._in_memory_episodes:
-                if ep.get("id") == episode_id:
-                    ep.update(updates)
-                    return ep
-            return None
-        try:
-            ep = await Episode.get(episode_id)
-            if not ep:
-                return None
-            for k, v in updates.items():
-                if hasattr(ep, k):
-                    setattr(ep, k, v)
-            await ep.save()
-            ep_dict = ep.model_dump()
-            ep_dict["id"] = ep.id
-            self._ensure_defaults(ep_dict)
-            return ep_dict
-        except Exception:
-            for ep in self._in_memory_episodes:
-                if ep.get("id") == episode_id:
-                    ep.update(updates)
-                    return ep
-            return None
+        target_ep = None
+        for ep in self._in_memory_episodes:
+            if ep.get("id") == episode_id:
+                ep.update(updates)
+                target_ep = ep
+                break
+        self._save_episodes_to_file()
+
+        if self.is_configured and self.client is not None:
+            try:
+                ep = await Episode.get(episode_id)
+                if ep:
+                    for k, v in updates.items():
+                        if hasattr(ep, k):
+                            setattr(ep, k, v)
+                    await ep.save()
+                    ep_dict = ep.model_dump()
+                    ep_dict["id"] = ep.id
+                    self._ensure_defaults(ep_dict)
+                    return ep_dict
+            except Exception:
+                pass
+        return target_ep
 
     async def delete_episode(self, episode_id: str) -> bool:
-        if not self.is_configured or self.client is None:
-            self._in_memory_episodes = [ep for ep in self._in_memory_episodes if ep.get("id") != episode_id]
-            return True
-        try:
-            ep = await Episode.get(episode_id)
-            if not ep:
-                return False
-            await ep.delete()
-            return True
-        except Exception:
-            self._in_memory_episodes = [ep for ep in self._in_memory_episodes if ep.get("id") != episode_id]
-            return True
+        self._in_memory_episodes = [ep for ep in self._in_memory_episodes if ep.get("id") != episode_id]
+        self._save_episodes_to_file()
+
+        if self.is_configured and self.client is not None:
+            try:
+                ep = await Episode.get(episode_id)
+                if ep:
+                    await ep.delete()
+            except Exception:
+                pass
+        return True
 
     # Approvals operations
     async def get_approvals(self) -> List[Dict[str, Any]]:
