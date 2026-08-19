@@ -36,13 +36,21 @@ async def update_user_role(user_id: str, payload: UserUpdateRolePayload, authori
         raise HTTPException(status_code=404, detail="User not found")
     return u
 
-@router.put("/users/{user_id}/status")
+@router.put("/users/{user_id}/suspend")
 async def suspend_user(user_id: str, payload: UserSuspendPayload, authorization: Optional[str] = Header(None)):
     admin_user = await verify_admin_token(authorization)
     u = await db.suspend_user(user_id, payload.suspended)
     if not u:
         raise HTTPException(status_code=404, detail="User not found")
     return u
+
+@router.delete("/users/{user_id}")
+async def delete_user_endpoint(user_id: str, authorization: Optional[str] = Header(None)):
+    admin_user = await verify_admin_token(authorization)
+    res = await db.delete_user(user_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"message": f"User {user_id} deleted successfully"}
 
 @router.post("/users/invite")
 async def invite_user(payload: InviteUserPayload, authorization: Optional[str] = Header(None)):

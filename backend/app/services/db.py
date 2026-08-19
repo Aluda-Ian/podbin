@@ -274,40 +274,26 @@ class BeanieDatabaseService:
             ]
         )
         
-        # Seed default users
+        # Seed and sync all users from memory/disk into MongoDB
         try:
-            from app.core.security import hash_password
-            admin_user = await User.find_one(User.email == "info@vendatechnologies.com")
-            if not admin_user:
-                all_users = await User.find_all().to_list()
-                new_admin = User(
-                    id=f"user-{len(all_users) + 1}",
-                    name="Ian Aluda",
-                    email="info@vendatechnologies.com",
-                    role="Super Admin",
-                    password=hash_password("@Munangwe212"),
-                    podcast_ids=["*"],
-                    suspended=False,
-                    is_verified=True
-                )
-                await new_admin.insert()
-
-            owner_user = await User.find_one(User.email == "owner@podbin.com")
-            if not owner_user:
-                all_users = await User.find_all().to_list()
-                new_owner = User(
-                    id=f"user-{len(all_users) + 1}",
-                    name="Sarah Chen",
-                    email="owner@podbin.com",
-                    role="Podcast Owner",
-                    password=hash_password("owner123"),
-                    podcast_ids=["podcast-1"],
-                    suspended=False,
-                    is_verified=True
-                )
-                await new_owner.insert()
+            for u in self._in_memory_users:
+                u_email = u.get("email", "").strip().lower()
+                if u_email:
+                    existing = await User.find_one(User.email == u_email)
+                    if not existing:
+                        db_user = User(
+                            id=u.get("id") or f"user-{len(self._in_memory_users) + 1}",
+                            name=u.get("name", ""),
+                            email=u_email,
+                            role=u.get("role", "Team Member"),
+                            password=u.get("password", ""),
+                            podcast_ids=u.get("podcast_ids", ["podcast-1"]),
+                            suspended=u.get("suspended", False),
+                            is_verified=u.get("is_verified", True)
+                        )
+                        await db_user.insert()
         except Exception as e:
-            print(f"User seeding notice: {e}")
+            print(f"User sync notice: {e}")
 
     def _ensure_defaults(self, ep: Dict[str, Any]):
         if "status" not in ep or ep["status"] is None:
@@ -549,38 +535,45 @@ class BeanieDatabaseService:
 
     # Users operations
     async def get_users(self) -> List[Dict[str, Any]]:
-        if not self.is_configured or self.client is None:
-            return self._in_memory_users
-        try:
-            users = await User.find_all().to_list()
-            if not users:
-                return self._in_memory_users
-            return [{"id": u.id, **u.model_dump()} for u in users]
-        except Exception:
-            return self._in_memory_users
+        mongo_users = []
+        if self.is_configured and self.client is not None:
+            try:
+                users = await User.find_all().to_list()
+                for u in users:
+                    mongo_users.append({"id": u.id, **u.model_dump()})
+            except Exception as e:
+                print(f"MongoDB get_users notice: {e}")
+        
+        # Combine MongoDB users and local disk/memory users by email
+        combined = list(mongo_users)
+        seen_emails = {u.get("email", "").strip().lower() for u in mongo_users if "email" in u}
+        
+        for u in self._in_memory_users:
+            clean_email = u.get("email", "").strip().lower()
+            if clean_email and clean_email not in seen_emails:
+                combined.append(u)
+                seen_emails.add(clean_email)
+                
+        return combined
 
     async def update_user_role(self, user_id: str, role: str) -> Optional[Dict[str, Any]]:
-        for u in self._in_memory_users:
-            if u.get("id") == user_id:
-                u["role"] = role
-                self._save_users_to_file()
-                return u
-        return None
+        return await self.update_user(user_id, {"role": role})
 
     async def suspend_user(self, user_id: str, suspended: bool) -> Optional[Dict[str, Any]]:
-        for u in self._in_memory_users:
-            if u.get("id") == user_id:
-                u["suspended"] = suspended
-                self._save_users_to_file()
-                return u
-        return None
+        return await self.update_user(user_id, {"suspended": suspended})
 
     async def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
+        clean_email = user_data.get("email", "").strip().lower()
+        existing_users = await self.get_users()
+        for u in existing_users:
+            if u.get("email", "").strip().lower() == clean_email:
+                return u
+
         new_id = f"user-{len(self._in_memory_users) + 1}"
         new_u = {
             "id": new_id,
             "name": user_data.get("name", ""),
-            "email": user_data.get("email", ""),
+            "email": clean_email,
             "role": user_data.get("role", "Team Member"),
             "password": user_data.get("password", ""),
             "podcast_ids": user_data.get("podcast_ids", ["podcast-1"]),
@@ -595,22 +588,24 @@ class BeanieDatabaseService:
                 new_user = User(
                     id=new_id,
                     name=user_data.get("name", ""),
-                    email=user_data.get("email", ""),
+                    email=clean_email,
                     role=user_data.get("role", "Team Member"),
                     password=user_data.get("password", ""),
                     podcast_ids=user_data.get("podcast_ids", ["podcast-1"]),
-                    suspended=False
+                    suspended=False,
+                    is_verified=True
                 )
                 await new_user.insert()
                 return {"id": new_user.id, **new_user.model_dump()}
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"MongoDB create_user notice: {e}")
         return new_u
 
     async def update_user(self, user_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        clean_target = user_id.strip().lower()
         target_user = None
         for u in self._in_memory_users:
-            if u.get("id") == user_id or u.get("email") == user_id:
+            if u.get("id") == user_id or u.get("email", "").strip().lower() == clean_target:
                 u.update(updates)
                 target_user = u
                 break
@@ -619,15 +614,45 @@ class BeanieDatabaseService:
         if self.is_configured and self.client is not None:
             try:
                 user = await User.get(user_id)
+                if not user:
+                    user = await User.find_one(User.email == clean_target)
                 if user:
                     for k, v in updates.items():
                         if hasattr(user, k):
                             setattr(user, k, v)
                     await user.save()
                     return {"id": user.id, **user.model_dump()}
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"MongoDB update_user notice: {e}")
         return target_user
+
+    async def delete_user(self, user_id: str) -> bool:
+        clean_target = user_id.strip().lower()
+        deleted = False
+        
+        # Remove from in-memory / disk user store
+        new_users = [
+            u for u in self._in_memory_users 
+            if u.get("id") != user_id and u.get("email", "").strip().lower() != clean_target
+        ]
+        if len(new_users) != len(self._in_memory_users):
+            self._in_memory_users = new_users
+            self._save_users_to_file()
+            deleted = True
+
+        # Remove from MongoDB if configured
+        if self.is_configured and self.client is not None:
+            try:
+                user = await User.get(user_id)
+                if not user:
+                    user = await User.find_one(User.email == clean_target)
+                if user:
+                    await user.delete()
+                    deleted = True
+            except Exception as e:
+                print(f"MongoDB delete_user notice: {e}")
+                
+        return deleted
 
     async def invite_user(self, name: str, email: str, role: str) -> Dict[str, Any]:
         users = await self.get_users()
