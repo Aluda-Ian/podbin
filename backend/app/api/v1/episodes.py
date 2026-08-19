@@ -55,6 +55,7 @@ class EpisodeUpdate(BaseModel):
 class MetadataRequest(BaseModel):
     burn_in_captions: bool = False
 
+@router.get("", response_model=List[EpisodeResponse])
 @router.get("/", response_model=List[EpisodeResponse])
 async def get_episodes():
     episodes = await Episode.find_all().to_list()
@@ -76,6 +77,7 @@ async def get_episode(episode_id: str):
     db._ensure_defaults(ep_dict)
     return ep_dict
 
+@router.post("", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 async def create_episode(
     title: str = Form(...),

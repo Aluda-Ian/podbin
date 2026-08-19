@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -18,6 +18,8 @@ from app.api.v1.integrations import router as integrations_router
 from app.api.v1.notifications import router as notifications_router
 from app.api.v1.copilot import router as copilot_router
 from app.services.db import db
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -52,19 +54,19 @@ async def add_no_cache_header(request, call_next):
     return response
 
 # Mount static files folder dynamically for EDL edits
-static_dir = Path("static")
+static_dir = BACKEND_DIR / "static"
 static_dir.mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # Mount logos directory
-logos_dir = Path("public/logos")
+logos_dir = BACKEND_DIR / "public/logos"
 logos_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/logos", StaticFiles(directory="public/logos"), name="logos")
+app.mount("/logos", StaticFiles(directory=logos_dir), name="logos")
 
 # Serve compiled frontend assets
-public_dir = Path("public")
+public_dir = BACKEND_DIR / "public"
 public_dir.mkdir(exist_ok=True)
-app.mount("/assets", StaticFiles(directory="public/assets"), name="assets")
+app.mount("/assets", StaticFiles(directory=public_dir / "assets"), name="assets")
 
 # Basic health-check endpoint
 @app.get("/health", status_code=200)
@@ -89,7 +91,9 @@ app.include_router(copilot_router, prefix="/api/v1/copilot", tags=["copilot"])
 # SPA Catch-all route (must be at the very bottom)
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
-    index_path = os.path.join("public", "index.html")
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+    index_path = public_dir / "index.html"
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return {"error": "Frontend build not found"}
