@@ -61,17 +61,19 @@ async def add_no_cache_header(request, call_next):
 def find_public_dir() -> Path:
     base_file = Path(__file__)
     candidates = [
-        base_file.parent.parent / "public",
-        base_file.resolve().parent.parent / "public",
-        Path.cwd() / "backend" / "public",
+        base_file.parents[2] / "public",
+        base_file.parents[1] / "public",
+        base_file.resolve().parents[2] / "public",
+        base_file.resolve().parents[1] / "public",
         Path.cwd() / "public",
-        Path("/var/task/backend/public"),
+        Path.cwd() / "backend" / "public",
         Path("/var/task/public"),
+        Path("/var/task/backend/public"),
     ]
     for c in candidates:
         if (c / "index.html").exists():
             return c
-    return base_file.parent.parent / "public"
+    return base_file.parents[1] / "public"
 
 public_dir = find_public_dir()
 
