@@ -129,57 +129,35 @@ async def get_api_connections(authorization: Optional[str] = Header(None)):
     settings_data = await db.get_settings()
     storage_target = settings_data.get("api_storage_target") or "database"
     
-    # Load API Keys
-    if storage_target == "env":
-        from app.services.env_manager import read_env_file
-        env_keys = read_env_file()
-        openai_key = env_keys.get("OPENAI_API_KEY", "")
-        deepgram_key = env_keys.get("DEEPGRAM_API_KEY", "")
-        elevenlabs_key = env_keys.get("ELEVENLABS_API_KEY", "")
-    else:
-        db_keys = await db.get_api_keys()
-        openai_key = db_keys.get("openai", "")
-        deepgram_key = db_keys.get("deepgram", "")
-        elevenlabs_key = db_keys.get("elevenlabs", "")
+    # Load API Keys from DB and Env (merged)
+    from app.services.env_manager import read_env_file
+    env_keys = read_env_file()
+    db_keys = await db.get_api_keys()
+
+    openai_key = db_keys.get("openai") or env_keys.get("OPENAI_API_KEY", "")
+    deepgram_key = db_keys.get("deepgram") or env_keys.get("DEEPGRAM_API_KEY", "")
+    elevenlabs_key = db_keys.get("elevenlabs") or env_keys.get("ELEVENLABS_API_KEY", "")
 
     # Load Integration Credentials
-    if storage_target == "env":
-        from app.services.env_manager import read_env_file
-        env_keys = read_env_file()
-        integration_creds = {
-            "global_sandbox_mode": settings_data.get("integration_credentials", {}).get("global_sandbox_mode", True),
-            "facebook": {"client_id": env_keys.get("FACEBOOK_CLIENT_ID", ""), "client_secret": env_keys.get("FACEBOOK_CLIENT_SECRET", "")},
-            "spotify": {"client_id": env_keys.get("SPOTIFY_CLIENT_ID", ""), "client_secret": env_keys.get("SPOTIFY_CLIENT_SECRET", "")},
-            "youtube": {"client_id": env_keys.get("YOUTUBE_CLIENT_ID", ""), "client_secret": env_keys.get("YOUTUBE_CLIENT_SECRET", "")},
-            "tiktok": {"client_id": env_keys.get("TIKTOK_CLIENT_ID", ""), "client_secret": env_keys.get("TIKTOK_CLIENT_SECRET", "")},
-            "twitter": {"client_id": env_keys.get("TWITTER_CLIENT_ID", ""), "client_secret": env_keys.get("TWITTER_CLIENT_SECRET", "")},
-            "instagram": {"client_id": env_keys.get("INSTAGRAM_CLIENT_ID", ""), "client_secret": env_keys.get("INSTAGRAM_CLIENT_SECRET", "")},
-            "linkedin": {"client_id": env_keys.get("LINKEDIN_CLIENT_ID", ""), "client_secret": env_keys.get("LINKEDIN_CLIENT_SECRET", "")},
-        }
-    else:
-        db_creds = settings_data.get("integration_credentials") or {}
-        integration_creds = {
-            "global_sandbox_mode": db_creds.get("global_sandbox_mode", True),
-            "facebook": {"client_id": db_creds.get("facebook", {}).get("client_id", ""), "client_secret": db_creds.get("facebook", {}).get("client_secret", "")},
-            "spotify": {"client_id": db_creds.get("spotify", {}).get("client_id", ""), "client_secret": db_creds.get("spotify", {}).get("client_secret", "")},
-            "youtube": {"client_id": db_creds.get("youtube", {}).get("client_id", ""), "client_secret": db_creds.get("youtube", {}).get("client_secret", "")},
-            "tiktok": {"client_id": db_creds.get("tiktok", {}).get("client_id", ""), "client_secret": db_creds.get("tiktok", {}).get("client_secret", "")},
-            "twitter": {"client_id": db_creds.get("twitter", {}).get("client_id", ""), "client_secret": db_creds.get("twitter", {}).get("client_secret", "")},
-            "instagram": {"client_id": db_creds.get("instagram", {}).get("client_id", ""), "client_secret": db_creds.get("instagram", {}).get("client_secret", "")},
-            "linkedin": {"client_id": db_creds.get("linkedin", {}).get("client_id", ""), "client_secret": db_creds.get("linkedin", {}).get("client_secret", "")},
-        }
+    db_creds = settings_data.get("integration_credentials") or {}
+    if not isinstance(db_creds, dict): db_creds = {}
 
-    def mask(k):
-        if not k: return ""
-        if len(k) > 8: return f"{k[:3]}...{k[-4:]}"
-        return "[masked]"
+    platforms = ["facebook", "spotify", "youtube", "tiktok", "twitter", "instagram", "linkedin"]
+    integration_creds = {
+        "global_sandbox_mode": db_creds.get("global_sandbox_mode", True)
+    }
+    for plat in platforms:
+        plat_db = db_creds.get(plat) or {}
+        c_id = plat_db.get("client_id") or env_keys.get(f"{plat.upper()}_CLIENT_ID", "")
+        c_sec = plat_db.get("client_secret") or env_keys.get(f"{plat.upper()}_CLIENT_SECRET", "")
+        integration_creds[plat] = {"client_id": c_id, "client_secret": c_sec}
 
     return {
         "api_storage_target": storage_target,
         "api_keys": {
-            "openai": mask(openai_key),
-            "deepgram": mask(deepgram_key),
-            "elevenlabs": mask(elevenlabs_key),
+            "openai": openai_key,
+            "deepgram": deepgram_key,
+            "elevenlabs": elevenlabs_key,
         },
         "integration_credentials": integration_creds
     }
@@ -187,126 +165,84 @@ async def get_api_connections(authorization: Optional[str] = Header(None)):
 @router.post("/api-connections")
 async def update_api_connections(payload: APIConnectionsPayload, authorization: Optional[str] = Header(None)):
     """
-    Update API connections with validation of API keys
+    Update API connections with validation and dual DB + Env persistence
     """
     admin_user = await verify_admin_token(authorization)
     settings_data = await db.get_settings()
-    current_storage_target = settings_data.get("api_storage_target") or "database"
     
     db_keys = await db.get_api_keys()
-    
     from app.services.env_manager import read_env_file, update_env_file
     env_keys = read_env_file()
     
-    current_openai = env_keys.get("OPENAI_API_KEY", "") if current_storage_target == "env" else db_keys.get("openai", "")
-    current_deepgram = env_keys.get("DEEPGRAM_API_KEY", "") if current_storage_target == "env" else db_keys.get("deepgram", "")
-    current_elevenlabs = env_keys.get("ELEVENLABS_API_KEY", "") if current_storage_target == "env" else db_keys.get("elevenlabs", "")
+    current_openai = db_keys.get("openai") or env_keys.get("OPENAI_API_KEY", "")
+    current_deepgram = db_keys.get("deepgram") or env_keys.get("DEEPGRAM_API_KEY", "")
+    current_elevenlabs = db_keys.get("elevenlabs") or env_keys.get("ELEVENLABS_API_KEY", "")
 
-    # Validate and resolve OpenAI API Key
-    openai_in = payload.api_keys.openai or ""
-    if openai_in and openai_in != current_openai:
-        is_valid, error_msg = await validate_api_key_format("openai", openai_in)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid OpenAI API key: {error_msg}"
-            )
-        openai_resolved = openai_in
-    else:
-        openai_resolved = openai_in
-        
-    # Validate and resolve Deepgram API Key
-    deepgram_in = payload.api_keys.deepgram or ""
-    if deepgram_in and deepgram_in != current_deepgram:
-        is_valid, error_msg = await validate_api_key_format("deepgram", deepgram_in)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid Deepgram API key: {error_msg}"
-            )
-        deepgram_resolved = deepgram_in
-    else:
-        deepgram_resolved = deepgram_in
-        
-    # Validate and resolve Elevenlabs API Key
-    elevenlabs_in = payload.api_keys.elevenlabs or ""
-    if elevenlabs_in and elevenlabs_in != current_elevenlabs:
-        is_valid, error_msg = await validate_api_key_format("elevenlabs", elevenlabs_in)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid ElevenLabs API key: {error_msg}"
-            )
-        elevenlabs_resolved = elevenlabs_in
-    else:
-        elevenlabs_resolved = elevenlabs_in
+    def is_masked_or_empty(val: Optional[str]) -> bool:
+        if not val: return True
+        val_str = str(val).strip()
+        return "..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-..."))
 
-    # Resolve Integration Credentials
+    # Resolve OpenAI Key
+    openai_in = payload.api_keys.openai
+    if is_masked_or_empty(openai_in):
+        openai_resolved = current_openai
+    else:
+        openai_resolved = openai_in.strip()
+
+    # Resolve Deepgram Key
+    deepgram_in = payload.api_keys.deepgram
+    if is_masked_or_empty(deepgram_in):
+        deepgram_resolved = current_deepgram
+    else:
+        deepgram_resolved = deepgram_in.strip()
+
+    # Resolve ElevenLabs Key
+    elevenlabs_in = payload.api_keys.elevenlabs
+    if is_masked_or_empty(elevenlabs_in):
+        elevenlabs_resolved = current_elevenlabs
+    else:
+        elevenlabs_resolved = elevenlabs_in.strip()
+
+    # Deep Merge Integration Credentials
     db_creds = settings_data.get("integration_credentials") or {}
-    
-    resolved_integration_creds = {
-        "global_sandbox_mode": payload.integration_credentials.global_sandbox_mode
-    }
-    
+    if not isinstance(db_creds, dict): db_creds = {}
+
+    resolved_integration_creds = dict(db_creds)
+    resolved_integration_creds["global_sandbox_mode"] = payload.integration_credentials.global_sandbox_mode
+
     platforms = ["facebook", "spotify", "youtube", "tiktok", "twitter", "instagram", "linkedin"]
     for plat in platforms:
         plat_in = getattr(payload.integration_credentials, plat, None)
-        if not plat_in:
-            continue
-            
-        client_id_in = plat_in.client_id or ""
-        client_secret_in = plat_in.client_secret or ""
-            
-        resolved_integration_creds[plat] = {
-            "client_id": client_id_in,
-            "client_secret": client_secret_in
-        }
+        existing_plat = resolved_integration_creds.get(plat) or {}
+        if plat_in:
+            c_id = plat_in.client_id if (plat_in.client_id is not None and not is_masked_or_empty(plat_in.client_id)) else existing_plat.get("client_id", "")
+            c_sec = plat_in.client_secret if (plat_in.client_secret is not None and not is_masked_or_empty(plat_in.client_secret)) else existing_plat.get("client_secret", "")
+            resolved_integration_creds[plat] = {"client_id": c_id, "client_secret": c_sec}
 
-    new_storage_target = payload.api_storage_target
-    
-    if new_storage_target == "database":
-        # Save to DB
-        await db.update_settings({
-            "api_storage_target": "database",
-            "integration_credentials": resolved_integration_creds
-        })
-        await db.update_api_keys({
-            "openai": openai_resolved,
-            "deepgram": deepgram_resolved,
-            "elevenlabs": elevenlabs_resolved
-        })
-        # Call env_manager to update env variables dynamically & survive restarts
-        env_updates = {
-            "OPENAI_API_KEY": openai_resolved,
-            "DEEPGRAM_API_KEY": deepgram_resolved,
-            "ELEVENLABS_API_KEY": elevenlabs_resolved,
-        }
-        for plat in platforms:
-            plat_data = resolved_integration_creds.get(plat) or {}
-            env_updates[f"{plat.upper()}_CLIENT_ID"] = plat_data.get("client_id", "")
-            env_updates[f"{plat.upper()}_CLIENT_SECRET"] = plat_data.get("client_secret", "")
-        update_env_file(env_updates)
-        
-    elif new_storage_target == "env":
-        # Save to Env file
-        env_updates = {
-            "OPENAI_API_KEY": openai_resolved,
-            "DEEPGRAM_API_KEY": deepgram_resolved,
-            "ELEVENLABS_API_KEY": elevenlabs_resolved,
-        }
-        for plat in platforms:
-            plat_data = resolved_integration_creds.get(plat) or {}
-            env_updates[f"{plat.upper()}_CLIENT_ID"] = plat_data.get("client_id", "")
-            env_updates[f"{plat.upper()}_CLIENT_SECRET"] = plat_data.get("client_secret", "")
-            
-        update_env_file(env_updates)
-        
-        await db.update_settings({
-            "api_storage_target": "env",
-            "integration_credentials": {
-                "global_sandbox_mode": payload.integration_credentials.global_sandbox_mode
-            }
-        })
+    new_storage_target = payload.api_storage_target or "database"
+
+    # Always persist to both DB and Env so entries never disappear
+    await db.update_settings({
+        "api_storage_target": new_storage_target,
+        "integration_credentials": resolved_integration_creds
+    })
+    await db.update_api_keys({
+        "openai": openai_resolved,
+        "deepgram": deepgram_resolved,
+        "elevenlabs": elevenlabs_resolved
+    })
+
+    env_updates = {
+        "OPENAI_API_KEY": openai_resolved,
+        "DEEPGRAM_API_KEY": deepgram_resolved,
+        "ELEVENLABS_API_KEY": elevenlabs_resolved,
+    }
+    for plat in platforms:
+        plat_data = resolved_integration_creds.get(plat) or {}
+        env_updates[f"{plat.upper()}_CLIENT_ID"] = plat_data.get("client_id", "")
+        env_updates[f"{plat.upper()}_CLIENT_SECRET"] = plat_data.get("client_secret", "")
+    update_env_file(env_updates)
 
     return {"message": "API Connections updated successfully", "api_storage_target": new_storage_target}
 
