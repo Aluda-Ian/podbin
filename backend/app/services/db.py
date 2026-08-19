@@ -105,10 +105,19 @@ class APIKeysDocument(Document):
 class BeanieDatabaseService:
     def __init__(self):
         self.client = None
-        from app.core.security import hash_password
         self._in_memory_users = self._load_users_from_file()
         self._in_memory_episodes = self._load_episodes_from_file()
+        self._in_memory_settings = self._load_settings_from_file()
+        self._in_memory_api_keys = self._load_api_keys_from_file()
         self._in_memory_approvals = []
+        self._in_memory_agents = [
+            {"name": "Research Agent", "role": "Research & Intelligence", "status": "idle", "task": "Idle", "tasksToday": 14, "success": 98},
+            {"name": "Booking Agent", "role": "Guest Outreach", "status": "idle", "task": "Idle", "tasksToday": 8, "success": 95},
+            {"name": "Production Agent", "role": "Audio & Video Editing", "status": "idle", "task": "Idle", "tasksToday": 22, "success": 100},
+            {"name": "Repurposing Agent", "role": "Social Clips Generation", "status": "idle", "task": "Idle", "tasksToday": 35, "success": 97},
+            {"name": "Distribution Agent", "role": "Multi-Platform Syndication", "status": "idle", "task": "Idle", "tasksToday": 12, "success": 100}
+        ]
+        self._in_memory_notifs = []
 
     def _load_users_from_file(self) -> List[Dict[str, Any]]:
         file_path = Path("static") / "users_data.json"
@@ -165,7 +174,6 @@ class BeanieDatabaseService:
                 json.dump(self._in_memory_users, f, indent=2, default=str)
         except Exception as e:
             print(f"Error saving users file: {e}")
-        self._in_memory_approvals = []
 
     def _load_episodes_from_file(self) -> List[Dict[str, Any]]:
         file_path = Path("static") / "episodes_data.json"
@@ -189,14 +197,19 @@ class BeanieDatabaseService:
                 json.dump(self._in_memory_episodes, f, indent=2, default=str)
         except Exception as e:
             print(f"Error saving episodes file: {e}")
-        self._in_memory_agents = [
-            {"name": "Research Agent", "role": "Research & Intelligence", "status": "idle", "task": "Idle", "tasksToday": 14, "success": 98},
-            {"name": "Booking Agent", "role": "Guest Outreach", "status": "idle", "task": "Idle", "tasksToday": 8, "success": 95},
-            {"name": "Production Agent", "role": "Audio & Video Editing", "status": "idle", "task": "Idle", "tasksToday": 22, "success": 100},
-            {"name": "Repurposing Agent", "role": "Social Clips Generation", "status": "idle", "task": "Idle", "tasksToday": 35, "success": 97},
-            {"name": "Distribution Agent", "role": "Multi-Platform Syndication", "status": "idle", "task": "Idle", "tasksToday": 12, "success": 100}
-        ]
-        self._in_memory_settings = {
+
+    def _load_settings_from_file(self) -> Dict[str, Any]:
+        file_path = Path("static") / "settings_data.json"
+        if file_path.exists():
+            try:
+                import json
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+            except Exception as e:
+                print(f"Error loading settings file: {e}")
+        return {
             "workspaceName": "PodBin Studio",
             "showName": "The Lovable Frontier",
             "primaryHost": "Jordan Lee",
@@ -206,8 +219,39 @@ class BeanieDatabaseService:
             "operational_tier": "FREE",
             "orchestrator_model": "Podule Copilot (Free)"
         }
-        self._in_memory_api_keys = {"deepgram": "", "openai": "", "elevenlabs": ""}
-        self._in_memory_notifs = []
+
+    def _save_settings_to_file(self):
+        try:
+            import json
+            file_path = Path("static") / "settings_data.json"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(self._in_memory_settings, f, indent=2, default=str)
+        except Exception as e:
+            print(f"Error saving settings file: {e}")
+
+    def _load_api_keys_from_file(self) -> Dict[str, str]:
+        file_path = Path("static") / "api_keys_data.json"
+        if file_path.exists():
+            try:
+                import json
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+            except Exception as e:
+                print(f"Error loading api_keys file: {e}")
+        return {"deepgram": "", "openai": "", "elevenlabs": ""}
+
+    def _save_api_keys_to_file(self):
+        try:
+            import json
+            file_path = Path("static") / "api_keys_data.json"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(self._in_memory_api_keys, f, indent=2, default=str)
+        except Exception as e:
+            print(f"Error saving api_keys file: {e}")
 
     @property
     def is_configured(self) -> bool:
@@ -477,6 +521,7 @@ class BeanieDatabaseService:
 
     async def update_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         self._in_memory_settings.update(updates)
+        self._save_settings_to_file()
         if not self.is_configured or self.client is None:
             return self._in_memory_settings
         try:
@@ -642,6 +687,9 @@ class BeanieDatabaseService:
                 if val and not ("..." in val or "[masked]" in val or val.startswith(("sk-...", "dg-...", "el-..."))):
                     self._in_memory_api_keys[k] = val
                     os.environ[f"{k.upper()}_API_KEY"] = val
+
+        # Persist to disk JSON file
+        self._save_api_keys_to_file()
 
         # Persist to MongoDB if configured
         if self.is_configured and self.client is not None:
