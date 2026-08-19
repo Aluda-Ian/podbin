@@ -58,6 +58,23 @@ async def add_no_cache_header(request, call_next):
         response.headers["Expires"] = "0"
     return response
 
+def find_public_dir() -> Path:
+    base_file = Path(__file__)
+    candidates = [
+        base_file.parent.parent / "public",
+        base_file.resolve().parent.parent / "public",
+        Path.cwd() / "backend" / "public",
+        Path.cwd() / "public",
+        Path("/var/task/backend/public"),
+        Path("/var/task/public"),
+    ]
+    for c in candidates:
+        if (c / "index.html").exists():
+            return c
+    return base_file.parent.parent / "public"
+
+public_dir = find_public_dir()
+
 # Mount static files folder dynamically for EDL edits safely
 static_dir = BACKEND_DIR / "static"
 try:
@@ -68,7 +85,7 @@ if static_dir.exists():
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # Mount logos directory safely
-logos_dir = BACKEND_DIR / "public/logos"
+logos_dir = public_dir / "logos"
 try:
     logos_dir.mkdir(parents=True, exist_ok=True)
 except Exception:
@@ -77,11 +94,6 @@ if logos_dir.exists():
     app.mount("/logos", StaticFiles(directory=logos_dir), name="logos")
 
 # Serve compiled frontend assets safely
-public_dir = BACKEND_DIR / "public"
-try:
-    public_dir.mkdir(exist_ok=True)
-except Exception:
-    pass
 assets_dir = public_dir / "assets"
 if assets_dir.exists():
     app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
@@ -112,7 +124,8 @@ app.include_router(copilot_router, prefix="/api/v1/copilot", tags=["copilot"])
 async def serve_spa(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API endpoint not found")
-    index_path = public_dir / "index.html"
-    if os.path.exists(index_path):
-        return FileResponse(index_path)
+    pub_dir = find_public_dir()
+    index_path = pub_dir / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path, media_type="text/html")
     return {"error": "Frontend build not found"}
