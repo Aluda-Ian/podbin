@@ -125,6 +125,16 @@ class BeanieDatabaseService:
                 "podcast_ids": ["*"],
                 "suspended": False,
                 "is_verified": True
+            },
+            {
+                "id": "user-3",
+                "name": "Sarah Chen",
+                "email": "owner@podbin.com",
+                "role": "Podcast Owner",
+                "password": hash_password("owner123"),
+                "podcast_ids": ["podcast-1"],
+                "suspended": False,
+                "is_verified": True
             }
         ]
         self._in_memory_episodes = []
@@ -170,11 +180,11 @@ class BeanieDatabaseService:
             ]
         )
         
-        # Seed default super admin
+        # Seed default users
         try:
+            from app.core.security import hash_password
             admin_user = await User.find_one(User.email == "info@vendatechnologies.com")
             if not admin_user:
-                from app.core.security import hash_password
                 all_users = await User.find_all().to_list()
                 new_admin = User(
                     id=f"user-{len(all_users) + 1}",
@@ -187,8 +197,23 @@ class BeanieDatabaseService:
                     is_verified=True
                 )
                 await new_admin.insert()
+
+            owner_user = await User.find_one(User.email == "owner@podbin.com")
+            if not owner_user:
+                all_users = await User.find_all().to_list()
+                new_owner = User(
+                    id=f"user-{len(all_users) + 1}",
+                    name="Sarah Chen",
+                    email="owner@podbin.com",
+                    role="Podcast Owner",
+                    password=hash_password("owner123"),
+                    podcast_ids=["podcast-1"],
+                    suspended=False,
+                    is_verified=True
+                )
+                await new_owner.insert()
         except Exception as e:
-            print(f"Admin seeding notice: {e}")
+            print(f"User seeding notice: {e}")
 
     def _ensure_defaults(self, ep: Dict[str, Any]):
         if "status" not in ep or ep["status"] is None:
