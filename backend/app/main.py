@@ -24,7 +24,10 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if db.is_configured:
-        await db.init_db()
+        try:
+            await db.init_db()
+        except Exception as e:
+            print(f"Warning: Database initialization failed on startup: {e}")
     else:
         print("Database is not configured; starting without database initialization.")
     yield
@@ -55,20 +58,33 @@ async def add_no_cache_header(request, call_next):
         response.headers["Expires"] = "0"
     return response
 
-# Mount static files folder dynamically for EDL edits
+# Mount static files folder dynamically for EDL edits safely
 static_dir = BACKEND_DIR / "static"
-static_dir.mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+try:
+    static_dir.mkdir(exist_ok=True)
+except Exception:
+    pass
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-# Mount logos directory
+# Mount logos directory safely
 logos_dir = BACKEND_DIR / "public/logos"
-logos_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/logos", StaticFiles(directory=logos_dir), name="logos")
+try:
+    logos_dir.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+if logos_dir.exists():
+    app.mount("/logos", StaticFiles(directory=logos_dir), name="logos")
 
-# Serve compiled frontend assets
+# Serve compiled frontend assets safely
 public_dir = BACKEND_DIR / "public"
-public_dir.mkdir(exist_ok=True)
-app.mount("/assets", StaticFiles(directory=public_dir / "assets"), name="assets")
+try:
+    public_dir.mkdir(exist_ok=True)
+except Exception:
+    pass
+assets_dir = public_dir / "assets"
+if assets_dir.exists():
+    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 # Basic health-check endpoint
 @app.get("/health", status_code=200)

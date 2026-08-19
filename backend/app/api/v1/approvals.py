@@ -122,7 +122,12 @@ async def render_edit(episode_id: str, edl: List[EDLItem] = Body(...)):
                 f.write(f"file '{escaped_path}'\n")
                 
         static_edited_dir = project_root / "static" / "edited"
-        static_edited_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            static_edited_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            import tempfile
+            static_edited_dir = Path(tempfile.gettempdir()) / "podbin" / "edited"
+            static_edited_dir.mkdir(parents=True, exist_ok=True)
         output_filename = f"edited_{episode_id}_{int(time.time())}.mp3"
         output_path = static_edited_dir / output_filename
         
@@ -203,7 +208,12 @@ async def render_cut(approval_id: str, payload: RenderCutPayload = Body(...)):
 
     project_root = Path(__file__).resolve().parents[4]
     static_cut_dir = project_root / "static" / "cuts"
-    static_cut_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        static_cut_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        import tempfile
+        static_cut_dir = Path(tempfile.gettempdir()) / "podbin" / "cuts"
+        static_cut_dir.mkdir(parents=True, exist_ok=True)
     output_filename = f"cut_{ep_id}_{int(time.time())}.{ext}"
     output_path = static_cut_dir / output_filename
 

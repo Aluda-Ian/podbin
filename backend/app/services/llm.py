@@ -94,7 +94,10 @@ async def run_local_whisper_transcription(media_path_or_url: str) -> dict:
     import httpx
     import tempfile
     import asyncio
-    from faster_whisper import WhisperModel
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError:
+        raise RuntimeError("faster-whisper is not installed in this environment. Please use Deepgram or OpenAI API transcription.")
 
     local_path = media_path_or_url
     temp_file = None

@@ -91,7 +91,12 @@ async def create_episode(
     is_video = False
     if file:
         uploads_dir = Path("static") / "uploads"
-        uploads_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            import tempfile
+            uploads_dir = Path(tempfile.gettempdir()) / "podbin" / "uploads"
+            uploads_dir.mkdir(parents=True, exist_ok=True)
         import secrets
         import re
         ext = Path(file.filename).suffix or ".mp4"
@@ -121,7 +126,12 @@ async def create_episode(
     avatar_url = None
     if avatar:
         avatars_dir = Path("static") / "avatars"
-        avatars_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            avatars_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            import tempfile
+            avatars_dir = Path(tempfile.gettempdir()) / "podbin" / "avatars"
+            avatars_dir.mkdir(parents=True, exist_ok=True)
         ext = Path(avatar.filename).suffix or ".jpg"
         import secrets
         avatar_filename = f"avatar_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}{ext}"
