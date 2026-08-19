@@ -59,21 +59,42 @@ async def add_no_cache_header(request, call_next):
     return response
 
 def find_public_dir() -> Path:
-    base_file = Path(__file__)
-    candidates = [
-        base_file.parents[2] / "public",
-        base_file.parents[1] / "public",
-        base_file.resolve().parents[2] / "public",
-        base_file.resolve().parents[1] / "public",
-        Path.cwd() / "public",
-        Path.cwd() / "backend" / "public",
+    candidates = []
+    
+    # Check all parents of __file__ (unresolved)
+    p1 = Path(__file__)
+    for parent in p1.parents:
+        candidates.append(parent / "public")
+        candidates.append(parent / "backend" / "public")
+
+    # Check all parents of __file__ (resolved)
+    try:
+        p2 = Path(__file__).resolve()
+        for parent in p2.parents:
+            candidates.append(parent / "public")
+            candidates.append(parent / "backend" / "public")
+    except Exception:
+        pass
+
+    # Common runtime directories
+    cwd = Path.cwd()
+    candidates.extend([
+        cwd / "public",
+        cwd / "backend" / "public",
+        cwd / "api" / "public",
         Path("/var/task/public"),
         Path("/var/task/backend/public"),
-    ]
+        Path("/var/task/api/public"),
+    ])
+
     for c in candidates:
-        if (c / "index.html").exists():
-            return c
-    return base_file.parents[1] / "public"
+        try:
+            if (c / "index.html").exists():
+                return c
+        except Exception:
+            pass
+
+    return Path.cwd() / "public"
 
 public_dir = find_public_dir()
 
@@ -129,5 +150,18 @@ async def serve_spa(full_path: str):
     pub_dir = find_public_dir()
     index_path = pub_dir / "index.html"
     if index_path.exists():
-        return FileResponse(index_path, media_type="text/html")
+        return FileResponse(str(index_path), media_type="text/html")
+    
+    # Check fallback index.html paths directly
+    for candidate in [
+        BACKEND_DIR / "public" / "index.html",
+        BACKEND_DIR.parent / "public" / "index.html",
+        Path("public/index.html"),
+        Path("backend/public/index.html"),
+        Path("/var/task/public/index.html"),
+        Path("/var/task/backend/public/index.html")
+    ]:
+        if candidate.exists():
+            return FileResponse(str(candidate), media_type="text/html")
+
     return {"error": "Frontend build not found"}
