@@ -140,7 +140,7 @@ async def render_edit(episode_id: str, edl: List[EDLItem] = Body(...)):
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise HTTPException(status_code=500, detail="Failed to synthesize concatenated media output.")
             
-        public_url = f"http://localhost:8000/static/edited/{output_filename}"
+        public_url = f"{settings.PUBLIC_URL}/static/edited/{output_filename}"
         
         await db.update_episode(episode_id, {
             "raw_audio_url": public_url,
@@ -282,7 +282,7 @@ async def render_cut(approval_id: str, payload: RenderCutPayload = Body(...)):
         if proc.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
             raise HTTPException(status_code=500, detail="FFmpeg rendering failed")
 
-        public_url = f"http://localhost:8000/static/cuts/{output_filename}"
+        public_url = f"{settings.PUBLIC_URL}/static/cuts/{output_filename}"
 
         await db.update_episode(ep_id, {
             "edit_decision_list": [item.model_dump() for item in edl],

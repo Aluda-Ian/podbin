@@ -102,7 +102,7 @@ async def create_episode(
         content = await file.read()
         with open(str(media_path), "wb") as f:
             f.write(content)
-        media_path_or_url = f"http://localhost:8000/static/uploads/{filename}"
+        media_path_or_url = f"{settings.PUBLIC_URL}/static/uploads/{filename}"
         
         if file.content_type and file.content_type.startswith("video/"):
             is_video = True
@@ -129,7 +129,7 @@ async def create_episode(
         content = await avatar.read()
         with open(str(avatar_path), "wb") as f:
             f.write(content)
-        avatar_url = f"http://localhost:8000/static/avatars/{avatar_filename}"
+        avatar_url = f"{settings.PUBLIC_URL}/static/avatars/{avatar_filename}"
 
     date_str = datetime.now().strftime("%b %d")
     new_ep = {

@@ -221,7 +221,7 @@ async def forgot_password(email: str = Body(..., embed=True)):
     smtp_creds = smtp_settings.get("smtp", {}) if smtp_settings else {}
     if smtp_creds.get("host") and smtp_creds.get("from_email"):
         from app.services.email import send_email
-        reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:5173')}/reset-password?token={reset_token}"
+        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token}"
         await send_email(
             to=email,
             subject="Reset your Podule password",

@@ -33,8 +33,6 @@ def decrypt_key(enc_key: str) -> str:
 
 # Configure MongoDB connection from environment URL
 MONGODB_URL = os.getenv("MONGODB_URL", os.getenv("DATABASE_URL", ""))
-if not MONGODB_URL or not MONGODB_URL.startswith("mongodb"):
-    raise ValueError("A valid remote MongoDB URI (MONGODB_URL or DATABASE_URL) must be provided in the environment. Local daemon fallback is disabled.")
 
 # Parse database name from the URL or fall back to "podule"
 db_name = "podule"
@@ -107,7 +105,13 @@ class BeanieDatabaseService:
     def __init__(self):
         self.client = None
 
+    @property
+    def is_configured(self) -> bool:
+        return bool(MONGODB_URL and MONGODB_URL.startswith("mongodb"))
+
     async def init_db(self):
+        if not self.is_configured:
+            raise RuntimeError("A valid remote MongoDB URI (MONGODB_URL or DATABASE_URL) must be provided in the environment.")
         self.client = AsyncIOMotorClient(MONGODB_URL)
         await init_beanie(
             database=self.client[db_name],

@@ -69,7 +69,7 @@ PLATFORM_CONFIG: Dict[str, Dict[str, Any]] = {
     },
 }
 
-REDIRECT_BASE = "http://localhost:8000/api/v1/integrations"
+REDIRECT_BASE = f"{settings.PUBLIC_URL}/api/v1/integrations"
 
 NAME_TO_KEY = {v["name"]: k for k, v in PLATFORM_CONFIG.items()}
 
@@ -77,7 +77,7 @@ NAME_TO_KEY = {v["name"]: k for k, v in PLATFORM_CONFIG.items()}
 @router.get("/{platform}/login")
 async def platform_login(
     platform: str,
-    origin: str = Query("http://localhost:5173"),
+    origin: str = Query(settings.FRONTEND_URL),
     mode: str = Query("sandbox"),
 ):
     key = platform.lower()
@@ -122,7 +122,7 @@ async def platform_callback(
     platform: str,
     code: Optional[str] = None,
     state: Optional[str] = None,
-    origin: str = Query("http://localhost:5173"),
+    origin: str = Query(settings.FRONTEND_URL),
     error: Optional[str] = None,
 ):
     key = platform.lower()
@@ -217,7 +217,7 @@ async def integration_links() -> list[Dict[str, Any]]:
         status = status_entry.get("status", "Disconnected") if status_entry else "Disconnected"
         connected = status.startswith("Connected") or bool(tokens.get("access_token"))
 
-        origin = "http://localhost:5173"
+        origin = settings.FRONTEND_URL
         mode = "sandbox"
         if plat_creds.get("mode") == "live":
             mode = "live"

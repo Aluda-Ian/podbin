@@ -23,8 +23,10 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize SQLAlchemy database schemas and seeds
-    await db.init_db()
+    if db.is_configured:
+        await db.init_db()
+    else:
+        print("Database is not configured; starting without database initialization.")
     yield
 
 app = FastAPI(
