@@ -255,12 +255,20 @@ class BeanieDatabaseService:
 
     @property
     def is_configured(self) -> bool:
-        return bool(MONGODB_URL and MONGODB_URL.startswith("mongodb"))
+        return bool(MONGODB_URL and (MONGODB_URL.startswith("mongodb://") or MONGODB_URL.startswith("mongodb+srv://")))
+
+    async def ensure_db_initialized(self):
+        if self.is_configured and self.client is None:
+            try:
+                await self.init_db()
+            except Exception as e:
+                print(f"[DB] Lazy init_db notice: {e}")
 
     async def init_db(self):
         if not self.is_configured:
             return
-        self.client = AsyncIOMotorClient(MONGODB_URL)
+        if self.client is None:
+            self.client = AsyncIOMotorClient(MONGODB_URL)
         await init_beanie(
             database=self.client[db_name],
             document_models=[
@@ -313,6 +321,7 @@ class BeanieDatabaseService:
 
     # Episodes operations
     async def get_episodes(self) -> List[Dict[str, Any]]:
+        await self.ensure_db_initialized()
         mongo_episodes = []
         if self.is_configured and self.client is not None:
             try:
@@ -341,6 +350,7 @@ class BeanieDatabaseService:
         return None
 
     async def add_episode(self, episode: Dict[str, Any]) -> Dict[str, Any]:
+        await self.ensure_db_initialized()
         if not episode.get("id"):
             episode["id"] = f"EP-{len(self._in_memory_episodes) + 1}"
         self._ensure_defaults(episode)
@@ -489,6 +499,7 @@ class BeanieDatabaseService:
 
     # Settings operations
     async def get_settings(self) -> Dict[str, Any]:
+        await self.ensure_db_initialized()
         smtp_data = {
             "host": "mail.vendatechnologies.com",
             "port": 465,
@@ -512,6 +523,7 @@ class BeanieDatabaseService:
             return res
 
     async def update_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        await self.ensure_db_initialized()
         self._in_memory_settings.update(updates)
         self._save_settings_to_file()
         if not self.is_configured or self.client is None:
@@ -535,6 +547,7 @@ class BeanieDatabaseService:
 
     # Users operations
     async def get_users(self) -> List[Dict[str, Any]]:
+        await self.ensure_db_initialized()
         mongo_users = []
         if self.is_configured and self.client is not None:
             try:
@@ -563,13 +576,15 @@ class BeanieDatabaseService:
         return await self.update_user(user_id, {"suspended": suspended})
 
     async def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
+        await self.ensure_db_initialized()
         clean_email = user_data.get("email", "").strip().lower()
         existing_users = await self.get_users()
         for u in existing_users:
             if u.get("email", "").strip().lower() == clean_email:
                 return u
 
-        new_id = f"user-{len(self._in_memory_users) + 1}"
+        import secrets
+        new_id = user_data.get("id") or f"user-{secrets.token_hex(6)}"
         new_u = {
             "id": new_id,
             "name": user_data.get("name", ""),

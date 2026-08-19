@@ -117,9 +117,10 @@ async def register(payload: UserCreate):
 
 @router.post("/login")
 async def login(payload: LoginRequest):
+    clean_email = payload.email.strip().lower()
     users = await db.get_users()
     for user in users:
-        if user["email"] == payload.email:
+        if user.get("email", "").strip().lower() == clean_email:
             stored_pw = user.get("password", "")
             is_valid = False
             if ":" in stored_pw:
@@ -136,7 +137,7 @@ async def login(payload: LoginRequest):
                     access_token=access_token,
                     user=UserResponse(
                         id=user["id"], name=user["name"], email=user["email"],
-                        role=user["role"], podcast_ids=user["podcast_ids"],
+                        role=user["role"], podcast_ids=user.get("podcast_ids", ["podcast-1"]),
                         provider_config=user.get("provider_config"),
                         monthly_token_usage=user.get("monthly_token_usage", 0),
                         token_limit=user.get("token_limit", 100000),
