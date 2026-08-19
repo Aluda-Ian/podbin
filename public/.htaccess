@@ -1,3 +1,6 @@
+# Increase request payload size limit for large audio/video file uploads (500MB)
+LimitRequestBody 524288000
+
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteBase /
@@ -6,3 +9,4 @@
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule . /index.html [L]
 </IfModule>
+

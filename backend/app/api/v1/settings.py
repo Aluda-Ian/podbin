@@ -253,25 +253,19 @@ async def test_provider_connection(payload: TestProviderPayload, authorization: 
     provider = payload.provider.lower()
     api_key = payload.api_key.strip()
     
-    # Resolve key if it's a masked placeholder
-    if api_key.startswith(("sk-...", "dg-...", "el-...")) or (api_key.startswith("[masked") and api_key.endswith("]")):
-        settings_data = await db.get_settings()
-        storage_target = settings_data.get("api_storage_target") or "database"
-        if storage_target == "database":
-            db_keys = await db.get_api_keys()
-            if provider == "openai":
-                api_key = db_keys.get("openai", "")
-            elif provider == "deepgram":
-                api_key = db_keys.get("deepgram", "")
-            elif provider == "elevenlabs":
-                api_key = db_keys.get("elevenlabs", "")
-        else:
-            if provider == "openai":
-                api_key = os.getenv("OPENAI_API_KEY", "")
-            elif provider == "deepgram":
-                api_key = os.getenv("DEEPGRAM_API_KEY", "")
-            elif provider == "elevenlabs":
-                api_key = os.getenv("ELEVENLABS_API_KEY", "")
+    def is_masked(val: str) -> bool:
+        if not val: return True
+        return "..." in val or "[masked]" in val or val.startswith(("sk-...", "dg-...", "el-..."))
+
+    # Resolve key if it's a masked placeholder or empty
+    if is_masked(api_key):
+        db_keys = await db.get_api_keys()
+        if provider == "openai":
+            api_key = db_keys.get("openai") or os.getenv("OPENAI_API_KEY", "")
+        elif provider == "deepgram":
+            api_key = db_keys.get("deepgram") or os.getenv("DEEPGRAM_API_KEY", "")
+        elif provider == "elevenlabs":
+            api_key = db_keys.get("elevenlabs") or os.getenv("ELEVENLABS_API_KEY", "")
 
     if not api_key:
         raise HTTPException(
@@ -285,34 +279,60 @@ async def test_provider_connection(payload: TestProviderPayload, authorization: 
         try:
             client = AsyncOpenAI(api_key=api_key)
             await client.models.list()
-            return {"success": True, "message": "Connection verified"}
+            return {"success": True, "message": "OpenAI Connection Verified"}
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"OpenAI validation failed: {str(e)}"
-            )
+            err_msg = str(e)
+            if "quota" in err_msg.lower() or "rate limit" in err_msg.lower() or "429" in err_msg:
+                return {"success": True, "message": "Key valid (Account quota or rate limit exceeded)"}
+            elif "invalid_api_key" in err_msg.lower() or "401" in err_msg or "incorrect api key" in err_msg.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="OpenAI API key is invalid or expired."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"OpenAI test failed: {err_msg}"
+                )
             
     elif provider == "deepgram":
         import httpx
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(
-                    "https://api.deepgram.com/v1/models",
+                    "https://api.deepgram.com/v1/projects",
                     headers={"Authorization": f"Token {api_key}"},
                     follow_redirects=True
                 )
                 if resp.status_code == 200:
-                    return {"success": True, "message": "Connection verified"}
+                    return {"success": True, "message": "Deepgram Connection Verified"}
+                elif resp.status_code == 401:
+                    # Fallback to /v1/models if token is scoped to specific model resources
+                    resp2 = await client.get(
+                        "https://api.deepgram.com/v1/models",
+                        headers={"Authorization": f"Token {api_key}"},
+                        follow_redirects=True
+                    )
+                    if resp2.status_code == 200:
+                        return {"success": True, "message": "Deepgram Connection Verified"}
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Deepgram API key is invalid or expired."
+                        )
+                elif resp.status_code in (402, 429):
+                    return {"success": True, "message": "Key valid (Deepgram account balance low/exceeded)"}
                 else:
                     detail_text = resp.text or f"HTTP {resp.status_code}"
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Deepgram validation failed: {detail_text}"
+                        detail=f"Deepgram test error: {detail_text}"
                     )
         except Exception as e:
+            if isinstance(e, HTTPException): raise e
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Deepgram error: {str(e)}"
+                detail=f"Deepgram test error: {str(e)}"
             )
 
     elif provider == "elevenlabs":
@@ -325,17 +345,25 @@ async def test_provider_connection(payload: TestProviderPayload, authorization: 
                     follow_redirects=True
                 )
                 if resp.status_code == 200:
-                    return {"success": True, "message": "Connection verified"}
+                    return {"success": True, "message": "ElevenLabs Connection Verified"}
+                elif resp.status_code == 401:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="ElevenLabs API key is invalid or expired."
+                    )
+                elif resp.status_code in (402, 429):
+                    return {"success": True, "message": "Key valid (ElevenLabs quota exceeded)"}
                 else:
                     detail_text = resp.text or f"HTTP {resp.status_code}"
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"ElevenLabs validation failed: {detail_text}"
+                        detail=f"ElevenLabs test error: {detail_text}"
                     )
         except Exception as e:
+            if isinstance(e, HTTPException): raise e
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"ElevenLabs error: {str(e)}"
+                detail=f"ElevenLabs test error: {str(e)}"
             )
             
     else:
@@ -343,6 +371,7 @@ async def test_provider_connection(payload: TestProviderPayload, authorization: 
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported diagnostic provider: {provider}"
         )
+
 
 
 

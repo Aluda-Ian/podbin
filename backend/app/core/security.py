@@ -10,7 +10,8 @@ import httpx
 # Token configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 days session token duration
+
 
 
 def hash_password(password: str) -> str:
@@ -92,7 +93,7 @@ async def verify_token(authorization: Optional[str] = Header(None)) -> str:
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expired"
+            detail="Dashboard session expired. Please log out and log back in."
         )
     except jwt.InvalidTokenError:
         raise HTTPException(
@@ -121,80 +122,72 @@ async def verify_admin_token(authorization: Optional[str] = Header(None)) -> str
 
 async def validate_openai_api_key(api_key: str) -> bool:
     """Validate OpenAI API key by making a test call"""
-    if not api_key or not api_key.startswith("sk-"):
+    if not api_key or len(api_key) < 15:
         return False
     
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             response = await client.get(
                 "https://api.openai.com/v1/models",
                 headers={"Authorization": f"Bearer {api_key}"},
                 follow_redirects=True
             )
-            # If we get 401, the key is invalid format but valid structure
-            # If we get 200, key is valid
-            # If we get 401 with auth_error, key is invalid
-            if response.status_code == 401:
-                error_data = response.json() if response.text else {}
-                if "invalid_api_key" in error_data.get("error", {}).get("type", ""):
-                    return False
-                # Some 401s might be due to other auth issues, be lenient
+            # 200 = valid key; 429 = valid key but quota exceeded; 401 = invalid
+            if response.status_code in (200, 429):
                 return True
-            elif response.status_code == 200:
-                return True
-            else:
-                # Network errors or other issues - be conservative
+            elif response.status_code == 401:
                 return False
+            # Be lenient on temporary network or server status codes (5xx, etc)
+            return response.status_code < 500
     except Exception:
-        # If we can't validate due to network issues, assume false
-        return False
+        # Fall back to checking key format if network check fails
+        return api_key.startswith("sk-")
 
 
 async def validate_deepgram_api_key(api_key: str) -> bool:
     """Validate Deepgram API key by making a test call"""
-    if not api_key or not api_key.startswith("dg-"):
+    if not api_key or len(api_key) < 10:
         return False
     
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             response = await client.get(
-                "https://api.deepgram.com/v1/models",
+                "https://api.deepgram.com/v1/projects",
                 headers={"Authorization": f"Token {api_key}"},
                 follow_redirects=True
             )
-            if response.status_code in (200, 401):
-                # 200 = valid key
-                # 401 = invalid key (but we need to check the error message)
-                if response.status_code == 401:
-                    error_data = response.json() if response.text else {}
-                    # If explicitly unauthorized, key is invalid
-                    return False
+            if response.status_code in (200, 402, 429):
                 return True
-            return False
+            elif response.status_code == 401:
+                # Try fallback models endpoint in case key is project-scoped
+                resp2 = await client.get(
+                    "https://api.deepgram.com/v1/models",
+                    headers={"Authorization": f"Token {api_key}"},
+                    follow_redirects=True
+                )
+                return resp2.status_code in (200, 402, 429)
+            return response.status_code < 500
     except Exception:
-        return False
+        return len(api_key) >= 20
 
 
 async def validate_elevenlabs_api_key(api_key: str) -> bool:
     """Validate ElevenLabs API key by making a test call"""
-    if not api_key or not api_key.startswith(("xi-", "pat-")):
+    if not api_key or len(api_key) < 10:
         return False
     
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             response = await client.get(
                 "https://api.elevenlabs.io/v1/user",
                 headers={"xi-api-key": api_key},
                 follow_redirects=True
             )
-            if response.status_code == 200:
-                return True
-            elif response.status_code == 401:
-                # Invalid key
-                return False
-            return False
+            if response.status_code in (200, 401, 402, 429):
+                return response.status_code != 401
+            return response.status_code < 500
     except Exception:
-        return False
+        return len(api_key) >= 20
 
 
 async def validate_api_key_format(key_type: str, api_key: str) -> tuple[bool, str]:
@@ -205,29 +198,35 @@ async def validate_api_key_format(key_type: str, api_key: str) -> tuple[bool, st
     if not api_key or not isinstance(api_key, str):
         return False, f"Invalid {key_type} API key format"
     
+    clean_key = api_key.strip()
+
+    # Skip validation for masked key placeholders
+    if "..." in clean_key or "[masked]" in clean_key or clean_key.startswith(("sk-...", "dg-...", "el-...")):
+        return True, ""
+    
     if key_type == "openai":
-        if not api_key.startswith("sk-"):
-            return False, "OpenAI key must start with 'sk-'"
-        # Validate against OpenAI API
-        is_valid = await validate_openai_api_key(api_key)
+        if not (clean_key.startswith("sk-") or len(clean_key) >= 20):
+            return False, "OpenAI key format is invalid"
+        is_valid = await validate_openai_api_key(clean_key)
         if not is_valid:
-            return False, "OpenAI API key is invalid or expired"
+            return False, "OpenAI API key authentication failed or expired"
     
     elif key_type == "deepgram":
-        if not api_key.startswith("dg-"):
-            return False, "Deepgram key must start with 'dg-'"
-        is_valid = await validate_deepgram_api_key(api_key)
+        if len(clean_key) < 10:
+            return False, "Deepgram API key is too short"
+        is_valid = await validate_deepgram_api_key(clean_key)
         if not is_valid:
-            return False, "Deepgram API key is invalid or expired"
+            return False, "Deepgram API key authentication failed or expired"
     
     elif key_type == "elevenlabs":
-        if len(api_key) < 10:
+        if len(clean_key) < 10:
             return False, "ElevenLabs API key is too short"
-        is_valid = await validate_elevenlabs_api_key(api_key)
+        is_valid = await validate_elevenlabs_api_key(clean_key)
         if not is_valid:
-            return False, "ElevenLabs API key is invalid or expired"
+            return False, "ElevenLabs API key authentication failed or expired"
     
     else:
         return False, f"Unknown key type: {key_type}"
     
     return True, ""
+

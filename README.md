@@ -626,6 +626,13 @@ mongorestore --uri "mongodb://localhost:27017/podbin" ./backups/podbin
 - Clear browser cache and localStorage
 - Check that `theme-provider.tsx` is properly loaded
 
+**"Upload failed - HTTP error 413 (Payload Too Large)"**
+- **Cause**: The uploaded media file (audio/video) exceeds the max payload size configured on the web server or reverse proxy.
+- **Nginx Solution**: Add `client_max_body_size 500M;` (or `1G`) in your Nginx site configuration block (`/etc/nginx/sites-available/default`) and reload Nginx (`sudo nginx -s reload`).
+- **Apache / cPanel Solution**: Add `LimitRequestBody 524288000` to `.htaccess`.
+- **Workaround**: Alternatively, paste a public media URL (S3, Cloudflare, Drive) into the URL field in the upload modal instead of uploading a raw file directly.
+
+
 ---
 
 ## Support & Documentation

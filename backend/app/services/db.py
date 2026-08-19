@@ -91,12 +91,13 @@ class SettingsDocument(Document):
 
 class APIKeysDocument(Document):
     id: str = Field(default="1")
-    deepgram: str
-    openai: str
-    elevenlabs: str
+    deepgram: Optional[str] = ""
+    openai: Optional[str] = ""
+    elevenlabs: Optional[str] = ""
 
     class Settings:
         name = "api_keys"
+
 
 
 
@@ -520,11 +521,100 @@ class BeanieDatabaseService:
 
     # API Keys Operations
     async def get_api_keys(self) -> Dict[str, str]:
-        return self._in_memory_api_keys
+        keys = {
+            "openai": self._in_memory_api_keys.get("openai", ""),
+            "deepgram": self._in_memory_api_keys.get("deepgram", ""),
+            "elevenlabs": self._in_memory_api_keys.get("elevenlabs", "")
+        }
+
+        # Query MongoDB document if database is configured
+        if self.is_configured and self.client is not None:
+            try:
+                doc = await APIKeysDocument.get("1")
+                if doc:
+                    if doc.openai:
+                        raw = decrypt_key(doc.openai[4:]) if doc.openai.startswith("enc:") else doc.openai
+                        if raw: keys["openai"] = raw
+                    if doc.deepgram:
+                        raw = decrypt_key(doc.deepgram[4:]) if doc.deepgram.startswith("enc:") else doc.deepgram
+                        if raw: keys["deepgram"] = raw
+                    if doc.elevenlabs:
+                        raw = decrypt_key(doc.elevenlabs[4:]) if doc.elevenlabs.startswith("enc:") else doc.elevenlabs
+                        if raw: keys["elevenlabs"] = raw
+            except Exception as e:
+                print(f"MongoDB API keys read warning: {e}")
+
+        # Fallback to env file / os.getenv if still empty
+        from app.services.env_manager import read_env_file
+        try:
+            env_file_data = read_env_file()
+        except Exception:
+            env_file_data = {}
+
+        if not keys.get("openai"):
+            keys["openai"] = env_file_data.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+        if not keys.get("deepgram"):
+            keys["deepgram"] = env_file_data.get("DEEPGRAM_API_KEY") or os.getenv("DEEPGRAM_API_KEY", "")
+        if not keys.get("elevenlabs"):
+            keys["elevenlabs"] = env_file_data.get("ELEVENLABS_API_KEY") or os.getenv("ELEVENLABS_API_KEY", "")
+
+        # Update in-memory dict and process environment variables
+        self._in_memory_api_keys.update(keys)
+        for k, v in keys.items():
+            if v:
+                os.environ[f"{k.upper()}_API_KEY"] = v
+
+        return keys
 
     async def update_api_keys(self, keys_dict: Dict[str, str]) -> Dict[str, str]:
-        self._in_memory_api_keys.update(keys_dict)
-        return self._in_memory_api_keys
+        # Clean and update in-memory cache & os.environ
+        for k in ["openai", "deepgram", "elevenlabs"]:
+            if k in keys_dict and keys_dict[k] is not None:
+                val = keys_dict[k].strip()
+                # Exclude masked placeholders from overriding valid stored keys
+                if val and not ("..." in val or "[masked]" in val or val.startswith(("sk-...", "dg-...", "el-..."))):
+                    self._in_memory_api_keys[k] = val
+                    os.environ[f"{k.upper()}_API_KEY"] = val
+
+        # Persist to MongoDB if configured
+        if self.is_configured and self.client is not None:
+            try:
+                doc = await APIKeysDocument.get("1")
+                if not doc:
+                    doc = APIKeysDocument(id="1", deepgram="", openai="", elevenlabs="")
+                    await doc.insert()
+
+                current = dict(self._in_memory_api_keys)
+                
+                openai_val = keys_dict.get("openai") or current.get("openai", "")
+                deepgram_val = keys_dict.get("deepgram") or current.get("deepgram", "")
+                elevenlabs_val = keys_dict.get("elevenlabs") or current.get("elevenlabs", "")
+
+                if openai_val and not ("..." in openai_val or "[masked]" in openai_val):
+                    doc.openai = f"enc:{encrypt_key(openai_val)}"
+                if deepgram_val and not ("..." in deepgram_val or "[masked]" in deepgram_val):
+                    doc.deepgram = f"enc:{encrypt_key(deepgram_val)}"
+                if elevenlabs_val and not ("..." in elevenlabs_val or "[masked]" in elevenlabs_val):
+                    doc.elevenlabs = f"enc:{encrypt_key(elevenlabs_val)}"
+
+                await doc.save()
+            except Exception as e:
+                print(f"MongoDB API keys write warning: {e}")
+
+        # Also persist to .env file if available
+        try:
+            from app.services.env_manager import update_env_file
+            env_updates = {}
+            if self._in_memory_api_keys.get("openai"): env_updates["OPENAI_API_KEY"] = self._in_memory_api_keys["openai"]
+            if self._in_memory_api_keys.get("deepgram"): env_updates["DEEPGRAM_API_KEY"] = self._in_memory_api_keys["deepgram"]
+            if self._in_memory_api_keys.get("elevenlabs"): env_updates["ELEVENLABS_API_KEY"] = self._in_memory_api_keys["elevenlabs"]
+            if env_updates:
+                update_env_file(env_updates)
+        except Exception as e:
+            print(f"Env file API keys write warning: {e}")
+
+        return await self.get_api_keys()
+
 
     # Admin Analytics
     async def get_admin_analytics(self) -> Dict[str, Any]:

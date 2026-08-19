@@ -79,7 +79,7 @@ async def create_episode(
 ):
     media_path_or_url = url
     is_video = False
-    if file:
+    if file and hasattr(file, "filename") and file.filename:
         uploads_dir = Path("static") / "uploads"
         try:
             uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -104,7 +104,8 @@ async def create_episode(
         elif ext.lower() in [".mp4", ".mov", ".webm", ".mkv", ".avi"]:
             is_video = True
     elif url:
-        if any(url.lower().endswith(ext) for ext in [".mp4", ".mov", ".webm", ".mkv", ".avi"]):
+        url_lower = url.lower()
+        if any(domain in url_lower for domain in ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "video"]) or any(url_lower.endswith(ext) for ext in [".mp4", ".mov", ".webm", ".mkv", ".avi", ".m3u8"]):
             is_video = True
     
     if not media_path_or_url:
@@ -114,7 +115,7 @@ async def create_episode(
         )
 
     avatar_url = None
-    if avatar:
+    if avatar and hasattr(avatar, "filename") and avatar.filename:
         avatars_dir = Path("static") / "avatars"
         try:
             avatars_dir.mkdir(parents=True, exist_ok=True)
@@ -140,9 +141,9 @@ async def create_episode(
         "status": EpisodeStatus.RESEARCH,
         "duration": "—",
         "date": date_str,
-        "progress": 20,
-        "note": "Starting transcription flow",
-        "raw_audio_url": None if is_video else media_path_or_url,
+        "progress": 10,
+        "note": "Media ingested. Click 'Start AI' or ask Copilot to begin transcription.",
+        "raw_audio_url": media_path_or_url,
         "raw_video_url": media_path_or_url if is_video else None,
         "media_type": "video" if is_video else "audio",
         "podcast_id": podcast_id or "podcast-1",
@@ -153,33 +154,6 @@ async def create_episode(
         "edit_decision_list": [],
         "selected_llm_config": {}
     }
-
-    try:
-        dg_res = await run_deepgram_transcription_pipeline(media_path_or_url, timestamps=True)
-        new_ep["transcript"] = dg_res["transcript"]
-        new_ep["word_timeline"] = dg_res["words"]
-
-        initial_state = EpisodeState(
-            raw_audio_url=media_path_or_url,
-            transcript=dg_res["transcript"],
-            generated_content={"titles": [], "notes": "", "social_snippets": []},
-            status=EpisodeStatus.RESEARCH,
-            human_feedback=None,
-            word_timeline=dg_res["words"],
-            edit_decision_list=[],
-            selected_llm_config={}
-        )
-        graph_result = await app_graph.ainvoke(initial_state)
-        new_ep["transcript"] = graph_result.get("transcript")
-        new_ep["generated_content"] = graph_result.get("generated_content")
-        new_ep["word_timeline"] = graph_result.get("word_timeline")
-        new_ep["edit_decision_list"] = graph_result.get("edit_decision_list")
-        new_ep["selected_llm_config"] = graph_result.get("selected_llm_config")
-        new_ep["status"] = EpisodeStatus.PENDING_REVIEW
-        new_ep["progress"] = 40
-        new_ep["note"] = "Transcription complete. Awaiting human review."
-    except Exception as e:
-        print(f"LangGraph execution failed: {e}")
 
     all_eps = await db.get_episodes()
     existing_ids = []
@@ -208,6 +182,7 @@ async def create_episode(
     })
 
     return added_ep
+
 
 @router.post("/ingest", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 async def ingest_episode(
@@ -424,48 +399,7 @@ async def generate_episode_metadata(episode_id: str, payload: MetadataRequest = 
     return result
 
 
-@router.post("/{episode_id}/transcribe")
-async def transcribe_episode(episode_id: str):
-    """Manually trigger the Deepgram + LangGraph transcription pipeline on an existing episode."""
-    ep = await db.get_episode(episode_id)
-    if not ep:
-        raise HTTPException(status_code=404, detail="Episode not found")
 
-    media_url = ep.get("raw_audio_url") or ep.get("raw_video_url")
-    if not media_url:
-        raise HTTPException(status_code=400, detail="Episode has no media URL to transcribe.")
-
-    try:
-        dg_res = await run_deepgram_transcription_pipeline(media_url, timestamps=True)
-        transcript = dg_res["transcript"]
-        word_timeline = dg_res["words"]
-
-        initial_state = EpisodeState(
-            raw_audio_url=media_url,
-            transcript=transcript,
-            generated_content={"titles": [], "notes": "", "social_snippets": []},
-            status=EpisodeStatus.RESEARCH,
-            human_feedback=None,
-            word_timeline=word_timeline,
-            edit_decision_list=[],
-            selected_llm_config={}
-        )
-        graph_result = await app_graph.ainvoke(initial_state)
-
-        updates = {
-            "transcript": graph_result.get("transcript", transcript),
-            "word_timeline": graph_result.get("word_timeline", word_timeline),
-            "generated_content": graph_result.get("generated_content"),
-            "edit_decision_list": graph_result.get("edit_decision_list"),
-            "selected_llm_config": graph_result.get("selected_llm_config"),
-            "status": EpisodeStatus.PENDING_REVIEW,
-            "progress": 40,
-            "note": "Manual transcription complete. Awaiting human review."
-        }
-        await db.update_episode(episode_id, updates)
-        return {"status": "success", "transcript": updates["transcript"], "word_count": len(word_timeline)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transcription pipeline failed: {str(e)}")
 
 
 class ScheduleEpisodeRequest(BaseModel):
