@@ -17,7 +17,7 @@
       "destination": "/api/index.py"
     },
     {
-      "source": "/((?!api/|health|static/|logos/).*)",
+      "source": "/((?!api/|health|static/|logos/|assets/|favicon.ico).*)",
       "destination": "/index.html"
     }
   ]
