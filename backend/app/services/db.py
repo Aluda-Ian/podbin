@@ -106,7 +106,23 @@ class BeanieDatabaseService:
     def __init__(self):
         self.client = None
         from app.core.security import hash_password
-        self._in_memory_users = [
+        self._in_memory_users = self._load_users_from_file()
+        self._in_memory_episodes = self._load_episodes_from_file()
+        self._in_memory_approvals = []
+
+    def _load_users_from_file(self) -> List[Dict[str, Any]]:
+        file_path = Path("static") / "users_data.json"
+        if file_path.exists():
+            try:
+                import json
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        return data
+            except Exception as e:
+                print(f"Error loading users file: {e}")
+        from app.core.security import hash_password
+        default_users = [
             {
                 "id": "user-1",
                 "name": "Ian Aluda",
@@ -138,7 +154,17 @@ class BeanieDatabaseService:
                 "is_verified": True
             }
         ]
-        self._in_memory_episodes = self._load_episodes_from_file()
+        return default_users
+
+    def _save_users_to_file(self):
+        try:
+            import json
+            file_path = Path("static") / "users_data.json"
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(self._in_memory_users, f, indent=2, default=str)
+        except Exception as e:
+            print(f"Error saving users file: {e}")
         self._in_memory_approvals = []
 
     def _load_episodes_from_file(self) -> List[Dict[str, Any]]:
@@ -483,18 +509,18 @@ class BeanieDatabaseService:
             return self._in_memory_users
 
     async def update_user_role(self, user_id: str, role: str) -> Optional[Dict[str, Any]]:
-        users = await self.get_users()
-        for u in users:
+        for u in self._in_memory_users:
             if u.get("id") == user_id:
                 u["role"] = role
+                self._save_users_to_file()
                 return u
         return None
 
     async def suspend_user(self, user_id: str, suspended: bool) -> Optional[Dict[str, Any]]:
-        users = await self.get_users()
-        for u in users:
+        for u in self._in_memory_users:
             if u.get("id") == user_id:
                 u["suspended"] = suspended
+                self._save_users_to_file()
                 return u
         return None
 
@@ -511,31 +537,46 @@ class BeanieDatabaseService:
             "is_verified": True
         }
         self._in_memory_users.append(new_u)
+        self._save_users_to_file()
         
-        if not self.is_configured or self.client is None:
-            return new_u
-        try:
-            new_user = User(
-                id=new_id,
-                name=user_data.get("name", ""),
-                email=user_data.get("email", ""),
-                role=user_data.get("role", "Team Member"),
-                password=user_data.get("password", ""),
-                podcast_ids=user_data.get("podcast_ids", ["podcast-1"]),
-                suspended=False
-            )
-            await new_user.insert()
-            return {"id": new_user.id, **new_user.model_dump()}
-        except Exception:
-            return new_u
+        if self.is_configured and self.client is not None:
+            try:
+                new_user = User(
+                    id=new_id,
+                    name=user_data.get("name", ""),
+                    email=user_data.get("email", ""),
+                    role=user_data.get("role", "Team Member"),
+                    password=user_data.get("password", ""),
+                    podcast_ids=user_data.get("podcast_ids", ["podcast-1"]),
+                    suspended=False
+                )
+                await new_user.insert()
+                return {"id": new_user.id, **new_user.model_dump()}
+            except Exception:
+                pass
+        return new_u
 
     async def update_user(self, user_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        users = await self.get_users()
-        for u in users:
-            if u.get("id") == user_id:
+        target_user = None
+        for u in self._in_memory_users:
+            if u.get("id") == user_id or u.get("email") == user_id:
                 u.update(updates)
-                return u
-        return None
+                target_user = u
+                break
+        self._save_users_to_file()
+
+        if self.is_configured and self.client is not None:
+            try:
+                user = await User.get(user_id)
+                if user:
+                    for k, v in updates.items():
+                        if hasattr(user, k):
+                            setattr(user, k, v)
+                    await user.save()
+                    return {"id": user.id, **user.model_dump()}
+            except Exception:
+                pass
+        return target_user
 
     async def invite_user(self, name: str, email: str, role: str) -> Dict[str, Any]:
         users = await self.get_users()

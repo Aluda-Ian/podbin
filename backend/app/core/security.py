@@ -29,7 +29,7 @@ def verify_password(password: str, hashed: str) -> bool:
 
 def create_reset_token(user_id: str) -> str:
     token = secrets.token_urlsafe(32)
-    expire = datetime.utcnow() + timedelta(hours=1)
+    expire = datetime.utcnow() + timedelta(hours=24)
     return jwt.encode(
         {"user_id": user_id, "reset_token": token, "exp": expire, "purpose": "reset_password"},
         SECRET_KEY, algorithm=ALGORITHM

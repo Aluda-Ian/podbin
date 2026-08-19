@@ -1,30 +1,44 @@
-# Environments
+# Environment files & Secrets
 .env
 .env.local
 .env.*.local
+*.env
 
-# Dependency directories
+# Dependency & Virtualenv directories
 node_modules/
 jspm_packages/
 venv/
 .venv/
 env/
+ENV/
 
-# Python cache and temporary files
+# Python cache & build outputs
 __pycache__/
-**/__pycache__/
+/**/__pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
 .tox/
 .coverage
 htmlcov/
+.build/
+dist/
+build/
 
-# Databases
+# Local Database & User/Episode Data files (Prevents pushing local DB / demo content to live)
+static/*.json
+static/uploads/*
+!static/uploads/.gitkeep
+static/avatars/*
+!static/avatars/.gitkeep
+backend/static/*.json
+backend/static/uploads/*
+backend/static/avatars/*
 *.db
 *.sqlite3
+scratch/
 
-# IDEs/Editors
+# IDEs & System files
 .vscode/
 .idea/
 *.suo
@@ -32,6 +46,5 @@ htmlcov/
 *.njsproj
 *.sln
 *.sw?
-
-# Uploads / Static assets
-backend/static/uploads/
+.DS_Store
+Thumbs.db

@@ -4,12 +4,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, Any, Optional
 
-# Hardcoded SMTP Credentials for Venda Technologies Mail Server
-SMTP_HOST = "mail.vendatechnologies.com"
-SMTP_PORT = 465
-SMTP_USERNAME = "smtp@vendatechnologies.com"
-SMTP_PASSWORD = "@Munangwe212"
-SMTP_FROM_EMAIL = "smtp@vendatechnologies.com"
+import os
+
+# Default SMTP Credentials for Venda Technologies Mail Server
+SMTP_HOST = os.getenv("SMTP_HOST", "mail.vendatechnologies.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "smtp@vendatechnologies.com")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "@Munangwe212")
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "smtp@vendatechnologies.com")
 
 
 async def send_email(
