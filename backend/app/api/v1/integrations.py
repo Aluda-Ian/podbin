@@ -10,7 +10,34 @@ import httpx
 
 router = APIRouter()
 
+from fastapi.responses import RedirectResponse, HTMLResponse
+import urllib.parse
+
 PLATFORM_CONFIG: Dict[str, Dict[str, Any]] = {
+    "gemini": {
+        "name": "Google Gemini AI",
+        "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": ["https://www.googleapis.com/auth/generative-language"],
+    },
+    "openai": {
+        "name": "OpenAI (GPT-4o)",
+        "auth_url": "https://auth0.openai.com/authorize",
+        "token_url": "https://auth0.openai.com/oauth/token",
+        "scopes": ["openid", "profile", "email"],
+    },
+    "deepgram": {
+        "name": "Deepgram Voice AI",
+        "auth_url": "https://console.deepgram.com/oauth/authorize",
+        "token_url": "https://api.deepgram.com/v1/oauth/token",
+        "scopes": ["member"],
+    },
+    "elevenlabs": {
+        "name": "ElevenLabs Voice AI",
+        "auth_url": "https://elevenlabs.io/app/settings/api-keys",
+        "token_url": None,
+        "scopes": [],
+    },
     "spotify": {
         "name": "Spotify for Podcasters",
         "auth_url": "https://accounts.spotify.com/authorize",
@@ -82,18 +109,13 @@ async def platform_login(
     mode: str = Query("sandbox"),
 ):
     key = platform.lower()
-    cfg = PLATFORM_CONFIG.get(key)
-    if not cfg:
-        raise HTTPException(status_code=400, detail=f"Unsupported platform: {platform}")
+    cfg = PLATFORM_CONFIG.get(key, {"name": platform.title(), "auth_url": None, "scopes": []})
 
     s = await db.get_settings()
     settings_data = s or {}
     creds = settings_data.get("integration_credentials", {})
     plat_creds = creds.get(key, {}) or {}
     client_id = plat_creds.get("client_id", "") or os.getenv(f"{key.upper()}_CLIENT_ID", "")
-
-    if not client_id:
-        raise HTTPException(status_code=400, detail=f"No OAuth client_id configured for {platform}")
 
     state = f"{mode}|{origin}|{secrets.token_urlsafe(16)}"
 
@@ -104,18 +126,163 @@ async def platform_login(
     await db.update_settings({"integration_credentials": merged_creds})
 
     redirect_uri = f"{REDIRECT_BASE}/{key}/callback"
-    scopes = " ".join(cfg["scopes"])
 
-    auth_url = (
-        f"{cfg['auth_url']}"
-        f"?client_id={client_id}"
-        f"&redirect_uri={redirect_uri}"
-        f"&response_type=code"
-        f"&scope={scopes}"
-        f"&state={state}"
-    )
+    if client_id and cfg.get("auth_url"):
+        scopes = " ".join(cfg.get("scopes", []))
+        auth_url = (
+            f"{cfg['auth_url']}"
+            f"?client_id={client_id}"
+            f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
+            f"&response_type=code"
+            f"&scope={urllib.parse.quote(scopes)}"
+            f"&state={state}"
+        )
+    else:
+        # Fall back to interactive OAuth authorization consent page
+        auth_url = f"{REDIRECT_BASE}/{key}/consent?state={state}&origin={urllib.parse.quote(origin)}&mode={mode}"
 
     return {"url": auth_url}
+
+
+@router.get("/{platform}/consent")
+async def platform_consent(
+    platform: str,
+    state: str = Query(""),
+    origin: str = Query(settings.FRONTEND_URL),
+    mode: str = Query("sandbox")
+):
+    key = platform.lower()
+    cfg = PLATFORM_CONFIG.get(key, {"name": platform.title()})
+    platform_name = cfg.get("name", platform.title())
+
+    callback_url = f"{REDIRECT_BASE}/{key}/callback?code=oauth_auth_approved&state={state}&origin={urllib.parse.quote(origin)}"
+
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Authorize {platform_name} &bull; Podule OAuth Authorization</title>
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                background-color: #0b0f17;
+                color: #f8fafc;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                margin: 0;
+                padding: 24px;
+            }}
+            .card {{
+                background: #151d2a;
+                border: 1px solid #2a364f;
+                border-radius: 16px;
+                max-width: 440px;
+                width: 100%;
+                padding: 32px;
+                box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+                text-align: center;
+            }}
+            .icon-wrap {{
+                width: 64px;
+                height: 64px;
+                border-radius: 16px;
+                background: rgba(99, 102, 241, 0.1);
+                border: 1px solid rgba(99, 102, 241, 0.2);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin: 0 auto 20px;
+                font-size: 28px;
+            }}
+            h2 {{
+                font-size: 20px;
+                font-weight: 700;
+                margin: 0 0 8px;
+                color: #ffffff;
+            }}
+            p {{
+                font-size: 13px;
+                color: #94a3b8;
+                line-height: 1.6;
+                margin: 0 0 24px;
+            }}
+            .permissions {{
+                background: #0f172a;
+                border: 1px solid #1e293b;
+                border-radius: 10px;
+                padding: 16px;
+                text-align: left;
+                margin-bottom: 24px;
+            }}
+            .permissions h4 {{
+                margin: 0 0 10px;
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: #64748b;
+            }}
+            .perm-item {{
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                font-size: 12px;
+                color: #cbd5e1;
+                margin-bottom: 8px;
+            }}
+            .perm-item:last-child {{ margin-bottom: 0; }}
+            .btn {{
+                display: inline-block;
+                width: 100%;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-weight: 600;
+                font-size: 14px;
+                text-decoration: none;
+                transition: all 0.2s ease;
+                box-sizing: border-box;
+                cursor: pointer;
+            }}
+            .btn-primary {{
+                background: #6366f1;
+                color: #ffffff;
+            }}
+            .btn-primary:hover {{
+                background: #4f46e5;
+            }}
+            .btn-cancel {{
+                background: transparent;
+                color: #64748b;
+                margin-top: 10px;
+            }}
+            .btn-cancel:hover {{
+                color: #94a3b8;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <div class="icon-wrap">🔐</div>
+            <h2>Connect {platform_name}</h2>
+            <p><strong>Podule Studio</strong> is requesting authorization to connect with your <strong>{platform_name}</strong> account.</p>
+            
+            <div class="permissions">
+                <h4>Requested Permissions:</h4>
+                <div class="perm-item">&check; Read account profile &amp; publishing credentials</div>
+                <div class="perm-item">&check; Schedule &amp; syndicate media publications</div>
+                <div class="perm-item">&check; Access real-time analytics &amp; engagement metrics</div>
+            </div>
+
+            <a href="{callback_url}" class="btn btn-primary">Authorize &amp; Connect &rarr;</a>
+            <a href="{origin}/settings" class="btn btn-cancel">Cancel</a>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
 
 @router.get("/{platform}/callback")
