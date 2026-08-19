@@ -32,7 +32,7 @@ def decrypt_key(enc_key: str) -> str:
         return ""
 
 # Configure MongoDB connection from environment URL
-MONGODB_URL = os.getenv("MONGODB_URL", os.getenv("DATABASE_URL", ""))
+MONGODB_URL = os.getenv("MONGODB_URL", os.getenv("MONGODB_URI", os.getenv("DATABASE_URL", "")))
 
 # Parse database name from the URL or fall back to "podule"
 db_name = "podule"
