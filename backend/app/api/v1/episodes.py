@@ -169,6 +169,9 @@ async def create_episode(
         "transcript": None,
         "generated_content": {"titles": [], "notes": "", "social_snippets": []},
         "human_feedback": None,
+        "clips": [],
+        "distribution_channels": [],
+        "socials_schedule": [],
         "word_timeline": [],
         "edit_decision_list": [],
         "selected_llm_config": {}

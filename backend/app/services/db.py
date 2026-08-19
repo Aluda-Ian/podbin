@@ -327,19 +327,25 @@ class BeanieDatabaseService:
 
     # Episodes operations
     async def get_episodes(self) -> List[Dict[str, Any]]:
-        if not self.is_configured or self.client is None:
-            return self._in_memory_episodes
-        try:
-            episodes = await Episode.find_all().to_list()
-            out = []
-            for ep in episodes:
-                ep_dict = ep.model_dump()
-                ep_dict["id"] = ep.id
-                self._ensure_defaults(ep_dict)
-                out.append(ep_dict)
-            return out
-        except Exception:
-            return self._in_memory_episodes
+        mongo_episodes = []
+        if self.is_configured and self.client is not None:
+            try:
+                episodes = await Episode.find_all().to_list()
+                for ep in episodes:
+                    ep_dict = ep.model_dump()
+                    ep_dict["id"] = ep.id
+                    self._ensure_defaults(ep_dict)
+                    mongo_episodes.append(ep_dict)
+            except Exception as e:
+                print(f"MongoDB get_episodes notice: {e}")
+        
+        # Combine MongoDB episodes and local file episodes (avoid duplicates)
+        combined = list(mongo_episodes)
+        mongo_ids = {ep["id"] for ep in mongo_episodes if "id" in ep}
+        for ep in self._in_memory_episodes:
+            if ep.get("id") not in mongo_ids:
+                combined.append(ep)
+        return combined
 
     async def get_episode(self, episode_id: str) -> Optional[Dict[str, Any]]:
         episodes = await self.get_episodes()
