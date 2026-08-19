@@ -14,35 +14,26 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 import urllib.parse
 
 PLATFORM_CONFIG: Dict[str, Dict[str, Any]] = {
-    "gemini": {
-        "name": "Google Gemini AI",
-        "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
-        "token_url": "https://oauth2.googleapis.com/token",
-        "scopes": ["https://www.googleapis.com/auth/generative-language"],
+    "facebook": {
+        "name": "Facebook",
+        "auth_url": "https://www.facebook.com/v19.0/dialog/oauth",
+        "token_url": "https://graph.facebook.com/v19.0/oauth/access_token",
+        "scopes": ["email", "public_profile", "pages_manage_posts", "pages_read_engagement", "pages_show_list"],
+        "default_client_id": os.getenv("FACEBOOK_CLIENT_ID", "1083921893120194")
     },
-    "openai": {
-        "name": "OpenAI (GPT-4o)",
-        "auth_url": "https://auth0.openai.com/authorize",
-        "token_url": "https://auth0.openai.com/oauth/token",
-        "scopes": ["openid", "profile", "email"],
-    },
-    "deepgram": {
-        "name": "Deepgram Voice AI",
-        "auth_url": "https://console.deepgram.com/oauth/authorize",
-        "token_url": "https://api.deepgram.com/v1/oauth/token",
-        "scopes": ["member"],
-    },
-    "elevenlabs": {
-        "name": "ElevenLabs Voice AI",
-        "auth_url": "https://elevenlabs.io/app/settings/api-keys",
-        "token_url": None,
-        "scopes": [],
+    "instagram": {
+        "name": "Instagram",
+        "auth_url": "https://www.facebook.com/v19.0/dialog/oauth",
+        "token_url": "https://graph.facebook.com/v19.0/oauth/access_token",
+        "scopes": ["instagram_basic", "instagram_content_publish", "pages_show_list"],
+        "default_client_id": os.getenv("INSTAGRAM_CLIENT_ID", os.getenv("FACEBOOK_CLIENT_ID", "1083921893120194"))
     },
     "spotify": {
         "name": "Spotify for Podcasters",
         "auth_url": "https://accounts.spotify.com/authorize",
         "token_url": "https://accounts.spotify.com/api/token",
-        "scopes": ["playlist-read-private", "user-read-email", "user-read-private"],
+        "scopes": ["playlist-read-private", "user-read-email", "user-read-private", "ugc-image-upload"],
+        "default_client_id": os.getenv("SPOTIFY_CLIENT_ID", "")
     },
     "youtube": {
         "name": "YouTube Studio",
@@ -51,50 +42,73 @@ PLATFORM_CONFIG: Dict[str, Dict[str, Any]] = {
         "scopes": [
             "https://www.googleapis.com/auth/youtube.upload",
             "https://www.googleapis.com/auth/youtube.readonly",
+            "https://www.googleapis.com/auth/userinfo.email"
         ],
+        "default_client_id": os.getenv("YOUTUBE_CLIENT_ID", os.getenv("GOOGLE_CLIENT_ID", ""))
     },
-    "facebook": {
-        "name": "Facebook",
-        "auth_url": "https://www.facebook.com/v19.0/dialog/oauth",
-        "token_url": "https://graph.facebook.com/v19.0/oauth/access_token",
-        "scopes": ["pages_manage_posts", "pages_read_engagement"],
+    "gemini": {
+        "name": "Google Gemini AI",
+        "auth_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": ["https://www.googleapis.com/auth/generative-language"],
+        "default_client_id": os.getenv("GEMINI_CLIENT_ID", os.getenv("GOOGLE_CLIENT_ID", ""))
+    },
+    "openai": {
+        "name": "OpenAI (GPT-4o)",
+        "auth_url": "https://auth0.openai.com/authorize",
+        "token_url": "https://auth0.openai.com/oauth/token",
+        "scopes": ["openid", "profile", "email"],
+        "default_client_id": os.getenv("OPENAI_CLIENT_ID", "")
+    },
+    "deepgram": {
+        "name": "Deepgram Voice AI",
+        "auth_url": "https://console.deepgram.com/oauth/authorize",
+        "token_url": "https://api.deepgram.com/v1/oauth/token",
+        "scopes": ["member"],
+        "default_client_id": os.getenv("DEEPGRAM_CLIENT_ID", "")
+    },
+    "elevenlabs": {
+        "name": "ElevenLabs Voice AI",
+        "auth_url": "https://elevenlabs.io/app/settings/api-keys",
+        "token_url": None,
+        "scopes": [],
+        "default_client_id": os.getenv("ELEVENLABS_CLIENT_ID", "")
     },
     "tiktok": {
         "name": "TikTok for Business",
         "auth_url": "https://www.tiktok.com/v2/auth/authorize",
         "token_url": "https://open.tiktokapis.com/v2/oauth/token/",
         "scopes": ["user.info.basic", "video.publish"],
+        "default_client_id": os.getenv("TIKTOK_CLIENT_ID", "")
     },
     "twitter": {
         "name": "X / Twitter",
         "auth_url": "https://twitter.com/i/oauth2/authorize",
         "token_url": "https://api.twitter.com/2/oauth2/token",
-        "scopes": ["tweet.read", "tweet.write", "users.read"],
-    },
-    "instagram": {
-        "name": "Instagram",
-        "auth_url": "https://www.instagram.com/oauth/authorize",
-        "token_url": "https://api.instagram.com/oauth/access_token",
-        "scopes": ["instagram_basic", "instagram_content_publish"],
+        "scopes": ["tweet.read", "tweet.write", "users.read", "offline.access"],
+        "default_client_id": os.getenv("TWITTER_CLIENT_ID", "")
     },
     "linkedin": {
         "name": "LinkedIn",
         "auth_url": "https://www.linkedin.com/oauth/v2/authorization",
         "token_url": "https://www.linkedin.com/oauth/v2/accessToken",
-        "scopes": ["r_emailaddress", "w_member_social"],
+        "scopes": ["r_emailaddress", "w_member_social", "r_liteprofile"],
+        "default_client_id": os.getenv("LINKEDIN_CLIENT_ID", "")
     },
     "apple": {
         "name": "Apple Podcasts Connect",
         "auth_url": "https://appleid.apple.com/auth/authorize",
         "token_url": "https://appleid.apple.com/auth/token",
-        "scopes": ["email"],
+        "scopes": ["email", "name"],
+        "default_client_id": os.getenv("APPLE_CLIENT_ID", "")
     },
     "substack": {
         "name": "Substack",
         "auth_url": None,
         "token_url": None,
         "scopes": [],
-    },
+        "default_client_id": ""
+    }
 }
 
 REDIRECT_BASE = f"{settings.PUBLIC_URL}/api/v1/integrations"
@@ -106,7 +120,7 @@ NAME_TO_KEY = {v["name"]: k for k, v in PLATFORM_CONFIG.items()}
 async def platform_login(
     platform: str,
     origin: str = Query(settings.FRONTEND_URL),
-    mode: str = Query("sandbox"),
+    mode: str = Query("live"),
 ):
     key = platform.lower()
     cfg = PLATFORM_CONFIG.get(key, {"name": platform.title(), "auth_url": None, "scopes": []})
@@ -115,7 +129,11 @@ async def platform_login(
     settings_data = s or {}
     creds = settings_data.get("integration_credentials", {})
     plat_creds = creds.get(key, {}) or {}
-    client_id = plat_creds.get("client_id", "") or os.getenv(f"{key.upper()}_CLIENT_ID", "")
+    client_id = (
+        plat_creds.get("client_id", "").strip()
+        or os.getenv(f"{key.upper()}_CLIENT_ID", "").strip()
+        or cfg.get("default_client_id", "")
+    )
 
     state = f"{mode}|{origin}|{secrets.token_urlsafe(16)}"
 
@@ -127,21 +145,22 @@ async def platform_login(
 
     redirect_uri = f"{REDIRECT_BASE}/{key}/callback"
 
-    if client_id and cfg.get("auth_url"):
+    if cfg.get("auth_url"):
         scopes = " ".join(cfg.get("scopes", []))
         auth_url = (
             f"{cfg['auth_url']}"
-            f"?client_id={client_id}"
+            f"?client_id={client_id if client_id else 'app_id_required'}"
             f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
             f"&response_type=code"
             f"&scope={urllib.parse.quote(scopes)}"
             f"&state={state}"
         )
+        if key in ["youtube", "gemini"]:
+            auth_url += "&access_type=offline&prompt=consent"
+        return {"url": auth_url}
     else:
-        # Fall back to interactive OAuth authorization consent page
         auth_url = f"{REDIRECT_BASE}/{key}/consent?state={state}&origin={urllib.parse.quote(origin)}&mode={mode}"
-
-    return {"url": auth_url}
+        return {"url": auth_url}
 
 
 @router.get("/{platform}/consent")
