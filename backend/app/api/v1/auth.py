@@ -217,19 +217,25 @@ async def forgot_password(email: str = Body(..., embed=True)):
     reset_token = create_reset_token(user["id"])
     smtp_settings = await db.get_settings()
     smtp_creds = smtp_settings.get("smtp", {}) if smtp_settings else {}
-    if smtp_creds.get("host") and smtp_creds.get("from_email"):
-        from app.services.email import send_email
-        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token}"
-        await send_email(
-            to=email,
-            subject="Reset your Podule password",
-            body=f"Click this link to reset your password: {reset_link}\n\nThis link expires in 1 hour.",
-            smtp_config=smtp_creds,
-        )
-    else:
-        import secrets as sec
-        db._reset_tokens = getattr(db, '_reset_tokens', {})
-        db._reset_tokens[email] = reset_token
+    from app.services.email import send_email
+    reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token}&email={email}"
+    await send_email(
+        to=email,
+        subject="Reset your Podule password",
+        body=f"Click this link to reset your password: {reset_link}\n\nThis link expires in 1 hour.",
+        html=f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <h2 style="color: #0f172a; margin-bottom: 16px;">Podule Password Reset</h2>
+          <p style="color: #334155; font-size: 15px; line-height: 1.5;">We received a request to reset your password for your <strong>Podule Studio</strong> account.</p>
+          <p style="color: #334155; font-size: 15px; line-height: 1.5;">Please click the button below to choose a new password:</p>
+          <div style="margin: 28px 0; text-align: center;">
+            <a href="{reset_link}" style="background-color: #0f172a; color: #ffffff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px; display: inline-block;">Reset Password &rarr;</a>
+          </div>
+          <p style="color: #64748b; font-size: 13px;">If you didn't request a password reset, you can safely ignore this email.</p>
+        </div>
+        """,
+        smtp_config=smtp_creds,
+    )
     return {"message": "If the email exists, a reset link has been sent."}
 
 
