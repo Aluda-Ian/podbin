@@ -31,7 +31,7 @@ class UserResponse(BaseModel):
 class UserCreate(BaseModel):
     name: str
     email: str
-    role: str
+    role: str = "Podcast Owner"
     password: str = "password123"
     podcast_ids: List[str] = Field(default_factory=list)
 

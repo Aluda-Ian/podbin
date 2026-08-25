@@ -21,7 +21,7 @@ class OTPVerifyRequest(BaseModel):
     otp: str
     name: str
     password: str
-    role: str = "Team Member"
+    role: str = "Podcast Owner"
 
 class Login2FARequest(BaseModel):
     email: str
