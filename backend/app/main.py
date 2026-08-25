@@ -138,13 +138,38 @@ if assets_dir.exists() and assets_dir.is_dir():
     except Exception as e:
         print(f"Notice: assets mount warning: {e}")
 
-# Basic health-check endpoint
+# Diagnostic health-check & database status endpoint
 @app.get("/health", status_code=200)
 async def health_check():
     return {
         "status": "healthy",
         "service": settings.PROJECT_NAME,
         "database_configured": db.is_configured,
+        "database_ready": db.is_db_ready,
+    }
+
+@app.get("/api/v1/db-status")
+async def db_status():
+    from urllib.parse import urlparse
+    from app.services.db import get_mongodb_url, get_db_name
+    from app.models.user import User
+    
+    url = get_mongodb_url()
+    parsed = urlparse(url)
+    user_count = None
+    if db.is_db_ready:
+        try:
+            user_count = await User.count()
+        except Exception as e:
+            user_count = f"Error: {e}"
+
+    return {
+        "is_configured": db.is_configured,
+        "is_db_ready": db.is_db_ready,
+        "mongodb_url_set": bool(url),
+        "mongodb_host": parsed.hostname or "none",
+        "db_name": get_db_name(),
+        "user_count_in_mongo": user_count
     }
 
 # Register routes with version prefix
