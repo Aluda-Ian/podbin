@@ -41,18 +41,18 @@ async def register_request_otp(payload: OTPRequest):
     otp_code = totp.now()
     OTP_STORE[payload.email] = {"code": otp_code, "expires": time.time() + 300}
     
-    # Send email
+    # Send email in background task so endpoint returns immediately without blocking
+    import asyncio
     from app.services.email import send_email
     smtp_settings = await db.get_settings()
     smtp_creds = smtp_settings.get("smtp", {}) if smtp_settings else {}
-    sent = await send_email(
+    
+    asyncio.create_task(send_email(
         to=payload.email,
         subject="Your Podule Registration Code",
         body=f"Your verification code is: {otp_code}\n\nIt expires in 5 minutes.",
         smtp_config=smtp_creds,
-    )
-    if not sent:
-        print(f"[DEV FALLBACK] OTP for {payload.email}: {otp_code}")
+    ))
         
     return {"message": "OTP sent to email"}
 
