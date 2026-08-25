@@ -55,10 +55,93 @@ class EpisodeUpdate(BaseModel):
 class MetadataRequest(BaseModel):
     burn_in_captions: bool = False
 
+class UploadUrlRequest(BaseModel):
+    filename: str
+    content_type: Optional[str] = "video/mp4"
+
+class ConfirmUploadRequest(BaseModel):
+    title: str
+    guest: str
+    raw_video_url: Optional[str] = None
+    raw_audio_url: Optional[str] = None
+    media_type: Optional[str] = "video"
+    avatar: Optional[str] = None
+    podcast_id: Optional[str] = "podcast-1"
+
 @router.get("", response_model=List[EpisodeResponse])
 @router.get("/", response_model=List[EpisodeResponse])
 async def get_episodes():
     return await db.get_episodes()
+
+@router.post("/upload-url")
+async def get_upload_url(payload: UploadUrlRequest = Body(...)):
+    """Generate signed direct-to-storage upload URL (Vercel Blob / S3 / R2)."""
+    from app.services.storage import generate_signed_upload_url
+    return generate_signed_upload_url(payload.filename, payload.content_type or "video/mp4")
+
+@router.post("/confirm-upload", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
+async def confirm_episode_upload(payload: ConfirmUploadRequest = Body(...)):
+    """Register episode with cloud storage URL after direct frontend upload."""
+    media_url = payload.raw_video_url or payload.raw_audio_url
+    if not media_url:
+        raise HTTPException(status_code=400, detail="Missing storage media URL.")
+    
+    is_video = payload.media_type == "video" or bool(payload.raw_video_url)
+    date_str = datetime.now().strftime("%b %d")
+    new_ep = {
+        "title": payload.title,
+        "guest": payload.guest,
+        "avatar": payload.avatar or "",
+        "stage": "Pre-Prod",
+        "status": EpisodeStatus.RESEARCH,
+        "duration": "—",
+        "date": date_str,
+        "progress": 10,
+        "note": "Media ingested via direct cloud upload. Ready for transcription.",
+        "raw_audio_url": payload.raw_audio_url or payload.raw_video_url,
+        "raw_video_url": payload.raw_video_url,
+        "media_type": "video" if is_video else "audio",
+        "podcast_id": payload.podcast_id or "podcast-1",
+        "transcript": None,
+        "generated_content": {"titles": [], "notes": "", "social_snippets": []},
+        "human_feedback": None,
+        "clips": [],
+        "distribution_channels": [],
+        "socials_schedule": [],
+        "word_timeline": [],
+        "edit_decision_list": [],
+        "selected_llm_config": {}
+    }
+    all_eps = await db.get_episodes()
+    existing_ids = []
+    for ep in all_eps:
+        try:
+            num = int(ep["id"].split("-")[1])
+            existing_ids.append(num)
+        except Exception:
+            pass
+    next_num = max(existing_ids) + 1 if existing_ids else 1
+    new_ep["id"] = f"EP-{next_num}"
+    
+    added_ep = await db.add_episode(new_ep)
+    
+    try:
+        import uuid
+        appr_id = f"appr-{str(uuid.uuid4())[:8]}"
+        await db.add_approval({
+            "id": appr_id,
+            "type": "SHOW_NOTES",
+            "title": f"Markdown · {added_ep['id']}",
+            "quote": f"Summary for {added_ep['title']}: {added_ep['note']}",
+            "meta": f"Generated just now for {added_ep['guest']}",
+            "priority": "medium",
+            "agent": "Research Agent",
+            "status": "PENDING"
+        })
+    except Exception as appr_err:
+        print(f"Approval creation notice: {appr_err}")
+
+    return added_ep
 
 @router.get("/{episode_id}", response_model=EpisodeResponse)
 async def get_episode(episode_id: str):
@@ -95,73 +178,38 @@ async def create_episode(
 ):
     media_path_or_url = url
     is_video = False
-    if file and hasattr(file, "filename") and file.filename:
-        uploads_dir = Path("static") / "uploads"
-        try:
-            uploads_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            import tempfile
-            uploads_dir = Path(tempfile.gettempdir()) / "podbin" / "uploads"
-            uploads_dir.mkdir(parents=True, exist_ok=True)
-        import secrets
-        import re
-        ext = Path(file.filename).suffix or ".mp4"
-        clean_name = Path(file.filename).stem
-        clean_name = re.sub(r'[^a-zA-Z0-9_-]', '', clean_name)
-        filename = f"{clean_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}{ext}"
-        media_path = uploads_dir / filename
-        content = await file.read()
-        with open(str(media_path), "wb") as f:
-            f.write(content)
-        media_path_or_url = f"{settings.PUBLIC_URL}/static/uploads/{filename}"
-        
-        if file.content_type and file.content_type.startswith("video/"):
-            is_video = True
-        elif ext.lower() in [".mp4", ".mov", ".webm", ".mkv", ".avi"]:
-            is_video = True
-    elif url:
+    if url:
         url_lower = url.lower()
         if any(domain in url_lower for domain in ["youtube.com", "youtu.be", "vimeo.com", "tiktok.com", "video"]) or any(url_lower.endswith(ext) for ext in [".mp4", ".mov", ".webm", ".mkv", ".avi", ".m3u8"]):
             is_video = True
             yt_embed = get_youtube_embed_url(url)
             if yt_embed:
                 media_path_or_url = yt_embed
-    
+    elif file and hasattr(file, "filename") and file.filename:
+        # Generate signed upload URL format if raw file provided in legacy call
+        from app.services.storage import generate_signed_upload_url
+        upload_info = generate_signed_upload_url(file.filename, file.content_type or "video/mp4")
+        media_path_or_url = upload_info.get("download_url")
+        if file.content_type and file.content_type.startswith("video/"):
+            is_video = True
+
     if not media_path_or_url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either a media file or a URL must be provided."
+            detail="Either a media file URL or remote URL must be provided. Use /upload-url for direct video upload."
         )
-
-    avatar_url = None
-    if avatar and hasattr(avatar, "filename") and avatar.filename:
-        avatars_dir = Path("static") / "avatars"
-        try:
-            avatars_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            import tempfile
-            avatars_dir = Path(tempfile.gettempdir()) / "podbin" / "avatars"
-            avatars_dir.mkdir(parents=True, exist_ok=True)
-        ext = Path(avatar.filename).suffix or ".jpg"
-        import secrets
-        avatar_filename = f"avatar_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}{ext}"
-        avatar_path = avatars_dir / avatar_filename
-        content = await avatar.read()
-        with open(str(avatar_path), "wb") as f:
-            f.write(content)
-        avatar_url = f"{settings.PUBLIC_URL}/static/avatars/{avatar_filename}"
 
     date_str = datetime.now().strftime("%b %d")
     new_ep = {
         "title": title,
         "guest": guest,
-        "avatar": avatar_url if avatar_url else "",
+        "avatar": "",
         "stage": "Pre-Prod",
         "status": EpisodeStatus.RESEARCH,
         "duration": "—",
         "date": date_str,
         "progress": 10,
-        "note": "Media ingested. Click 'Start AI' or ask Copilot to begin transcription.",
+        "note": "Media ingested. Ready for processing.",
         "raw_audio_url": media_path_or_url,
         "raw_video_url": media_path_or_url if is_video else None,
         "media_type": "video" if is_video else "audio",
@@ -189,23 +237,6 @@ async def create_episode(
     new_ep["id"] = f"EP-{next_num}"
     
     added_ep = await db.add_episode(new_ep)
-    
-    try:
-        import uuid
-        appr_id = f"appr-{str(uuid.uuid4())[:8]}"
-        await db.add_approval({
-            "id": appr_id,
-            "type": "SHOW_NOTES",
-            "title": f"Markdown · {added_ep['id']}",
-            "quote": f"Summary for {added_ep['title']}: {added_ep['note']}",
-            "meta": f"Generated just now for {added_ep['guest']}",
-            "priority": "medium",
-            "agent": "Research Agent",
-            "status": "PENDING"
-        })
-    except Exception as appr_err:
-        print(f"Approval creation notice: {appr_err}")
-
     return added_ep
 
 

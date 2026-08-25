@@ -258,50 +258,57 @@ class BeanieDatabaseService:
         return bool(MONGODB_URL and (MONGODB_URL.startswith("mongodb://") or MONGODB_URL.startswith("mongodb+srv://")))
 
     async def ensure_db_initialized(self):
-        if self.is_configured and self.client is None:
+        if self.is_configured and (self.client is None or not getattr(self, "_beanie_initialized", False)):
             try:
                 await self.init_db()
             except Exception as e:
-                print(f"[DB] Lazy init_db notice: {e}")
+                print(f"[DB ERROR] Lazy init_db failure: {e}")
 
     async def init_db(self):
         if not self.is_configured:
+            print("[CRITICAL DB WARNING] MONGODB_URI/MONGODB_URL is not set in environment variables! App is operating in unpersisted fallback mode.")
             return
         if self.client is None:
             self.client = AsyncIOMotorClient(MONGODB_URL)
-        await init_beanie(
-            database=self.client[db_name],
-            document_models=[
-                User,
-                Episode,
-                Approval,
-                Agent,
-                SettingsDocument,
-                APIKeysDocument,
-                Notification
-            ]
-        )
         
-        # Seed and sync all users from memory/disk into MongoDB
+        if not getattr(self, "_beanie_initialized", False):
+            await init_beanie(
+                database=self.client[db_name],
+                document_models=[
+                    User,
+                    Episode,
+                    Approval,
+                    Agent,
+                    SettingsDocument,
+                    APIKeysDocument,
+                    Notification
+                ]
+            )
+            self._beanie_initialized = True
+        
+        # Seed default admin users ONLY if the MongoDB User collection is completely empty
         try:
-            for u in self._in_memory_users:
-                u_email = u.get("email", "").strip().lower()
-                if u_email:
-                    existing = await User.find_one(User.email == u_email)
-                    if not existing:
-                        db_user = User(
-                            id=u.get("id") or f"user-{len(self._in_memory_users) + 1}",
-                            name=u.get("name", ""),
-                            email=u_email,
-                            role=u.get("role", "Team Member"),
-                            password=u.get("password", ""),
-                            podcast_ids=u.get("podcast_ids", ["podcast-1"]),
-                            suspended=u.get("suspended", False),
-                            is_verified=u.get("is_verified", True)
-                        )
-                        await db_user.insert()
+            user_count = await User.count()
+            if user_count == 0:
+                print("[DB] User collection is empty. Seeding initial admin users into MongoDB...")
+                for u in self._in_memory_users:
+                    u_email = u.get("email", "").strip().lower()
+                    if u_email:
+                        existing = await User.find_one(User.email == u_email)
+                        if not existing:
+                            db_user = User(
+                                id=u.get("id") or f"user-1",
+                                name=u.get("name", ""),
+                                email=u_email,
+                                role=u.get("role", "Team Member"),
+                                password=u.get("password", ""),
+                                podcast_ids=u.get("podcast_ids", ["podcast-1"]),
+                                suspended=u.get("suspended", False),
+                                is_verified=u.get("is_verified", True)
+                            )
+                            await db_user.insert()
         except Exception as e:
-            print(f"User sync notice: {e}")
+            print(f"[DB] User seed check notice: {e}")
 
     def _ensure_defaults(self, ep: Dict[str, Any]):
         if "status" not in ep or ep["status"] is None:
@@ -322,25 +329,19 @@ class BeanieDatabaseService:
     # Episodes operations
     async def get_episodes(self) -> List[Dict[str, Any]]:
         await self.ensure_db_initialized()
-        mongo_episodes = []
         if self.is_configured and self.client is not None:
             try:
                 episodes = await Episode.find_all().to_list()
+                mongo_episodes = []
                 for ep in episodes:
                     ep_dict = ep.model_dump()
                     ep_dict["id"] = ep.id
                     self._ensure_defaults(ep_dict)
                     mongo_episodes.append(ep_dict)
+                return mongo_episodes
             except Exception as e:
-                print(f"MongoDB get_episodes notice: {e}")
-        
-        # Combine MongoDB episodes and local file episodes (avoid duplicates)
-        combined = list(mongo_episodes)
-        mongo_ids = {ep["id"] for ep in mongo_episodes if "id" in ep}
-        for ep in self._in_memory_episodes:
-            if ep.get("id") not in mongo_ids:
-                combined.append(ep)
-        return combined
+                print(f"[DB ERROR] MongoDB get_episodes failure: {e}")
+        return self._in_memory_episodes
 
     async def get_episode(self, episode_id: str) -> Optional[Dict[str, Any]]:
         episodes = await self.get_episodes()
@@ -556,26 +557,13 @@ class BeanieDatabaseService:
     # Users operations
     async def get_users(self) -> List[Dict[str, Any]]:
         await self.ensure_db_initialized()
-        mongo_users = []
         if self.is_configured and self.client is not None:
             try:
                 users = await User.find_all().to_list()
-                for u in users:
-                    mongo_users.append({"id": u.id, **u.model_dump()})
+                return [{"id": u.id, **u.model_dump()} for u in users]
             except Exception as e:
-                print(f"MongoDB get_users notice: {e}")
-        
-        # Combine MongoDB users and local disk/memory users by email
-        combined = list(mongo_users)
-        seen_emails = {u.get("email", "").strip().lower() for u in mongo_users if "email" in u}
-        
-        for u in self._in_memory_users:
-            clean_email = u.get("email", "").strip().lower()
-            if clean_email and clean_email not in seen_emails:
-                combined.append(u)
-                seen_emails.add(clean_email)
-                
-        return combined
+                print(f"[DB ERROR] MongoDB get_users failure: {e}")
+        return self._in_memory_users
 
     async def update_user_role(self, user_id: str, role: str) -> Optional[Dict[str, Any]]:
         return await self.update_user(user_id, {"role": role})
