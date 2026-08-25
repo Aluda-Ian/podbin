@@ -95,6 +95,7 @@ async def get_upload_url(payload: UploadUrlRequest = Body(...)):
     from app.services.storage import generate_signed_upload_url
     return generate_signed_upload_url(payload.filename, payload.content_type or "video/mp4")
 
+# TODO: Replace local disk file writes with direct-to-storage upload flow (signed URL -> S3/R2/Vercel Blob -> confirm endpoint)
 @router.put("/upload-direct")
 async def upload_file_direct(filename: str, request: Request):
     """Receive direct file stream for local dev / fallback object storage."""
