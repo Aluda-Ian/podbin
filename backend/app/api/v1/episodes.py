@@ -1,7 +1,11 @@
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException, status, Body
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, status, Body, Request
+from fastapi.responses import FileResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pathlib import Path
+import os
+import secrets
+import re
 from app.agents.state import EpisodeState, EpisodeStatus
 from app.agents.graph import app_graph
 from app.models.episode import EpisodeResponse, Clip, DistributionChannel, SocialsSchedule, Episode
@@ -13,6 +17,8 @@ from pydantic import BaseModel
 
 
 router = APIRouter()
+UPLOAD_DIR = Path("static/uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 async def run_deepgram_transcription_pipeline(audio_url: str, timestamps: bool = True) -> dict:
     from app.services.llm import run_local_whisper_transcription
@@ -27,9 +33,10 @@ async def run_deepgram_transcription_pipeline(audio_url: str, timestamps: bool =
         return await run_local_whisper_transcription(audio_url)
 
 class EpisodeCreate(BaseModel):
-    title: str
-    guest: str
+    title: Optional[str] = "Ingested Episode"
+    guest: Optional[str] = "Unknown Guest"
     raw_audio_url: Optional[str] = None
+    raw_video_url: Optional[str] = None
 
 class EpisodeUpdate(BaseModel):
     title: Optional[str] = None
@@ -60,8 +67,8 @@ class UploadUrlRequest(BaseModel):
     content_type: Optional[str] = "video/mp4"
 
 class ConfirmUploadRequest(BaseModel):
-    title: str
-    guest: str
+    title: Optional[str] = "Ingested Episode"
+    guest: Optional[str] = "Unknown Guest"
     raw_video_url: Optional[str] = None
     raw_audio_url: Optional[str] = None
     media_type: Optional[str] = "video"
@@ -79,6 +86,34 @@ async def get_upload_url(payload: UploadUrlRequest = Body(...)):
     from app.services.storage import generate_signed_upload_url
     return generate_signed_upload_url(payload.filename, payload.content_type or "video/mp4")
 
+@router.put("/upload-direct")
+async def upload_file_direct(filename: str, request: Request):
+    """Receive direct file stream for local dev / fallback object storage."""
+    clean_fn = Path(filename).name
+    file_path = UPLOAD_DIR / clean_fn
+    body = await request.body()
+    with open(file_path, "wb") as f:
+        f.write(body)
+    return {"status": "success", "filename": clean_fn, "size": len(body)}
+
+@router.get("/media/{filename}")
+async def serve_media_file(filename: str):
+    """Serve uploaded media file for playback and processing."""
+    clean_fn = Path(filename).name
+    file_path = UPLOAD_DIR / clean_fn
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Media file not found")
+    
+    content_type = "video/mp4"
+    fn_lower = clean_fn.lower()
+    if fn_lower.endswith(".mp3"): content_type = "audio/mpeg"
+    elif fn_lower.endswith(".wav"): content_type = "audio/wav"
+    elif fn_lower.endswith(".webm"): content_type = "video/webm"
+    elif fn_lower.endswith(".mkv"): content_type = "video/x-matroska"
+    elif fn_lower.endswith(".mov"): content_type = "video/quicktime"
+    
+    return FileResponse(path=file_path, media_type=content_type, filename=clean_fn)
+
 @router.post("/confirm-upload", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 async def confirm_episode_upload(payload: ConfirmUploadRequest = Body(...)):
     """Register episode with cloud storage URL after direct frontend upload."""
@@ -89,8 +124,8 @@ async def confirm_episode_upload(payload: ConfirmUploadRequest = Body(...)):
     is_video = payload.media_type == "video" or bool(payload.raw_video_url)
     date_str = datetime.now().strftime("%b %d")
     new_ep = {
-        "title": payload.title,
-        "guest": payload.guest,
+        "title": payload.title or "Ingested Episode",
+        "guest": payload.guest or "Unknown Guest",
         "avatar": payload.avatar or "",
         "stage": "Pre-Prod",
         "status": EpisodeStatus.RESEARCH,
@@ -169,13 +204,28 @@ def get_youtube_embed_url(url: str) -> Optional[str]:
 @router.post("", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 async def create_episode(
-    title: str = Form(...),
-    guest: str = Form(...),
+    request: Request,
+    title: Optional[str] = Form(None),
+    guest: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
     avatar: Optional[UploadFile] = File(None),
     podcast_id: Optional[str] = Form("podcast-1")
 ):
+    content_type = request.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        try:
+            json_body = await request.json()
+            title = title or json_body.get("title") or json_body.get("name")
+            guest = guest or json_body.get("guest") or json_body.get("author")
+            url = url or json_body.get("url") or json_body.get("raw_video_url") or json_body.get("raw_audio_url") or json_body.get("video_url") or json_body.get("audio_url")
+            podcast_id = podcast_id or json_body.get("podcast_id") or "podcast-1"
+        except Exception:
+            pass
+
+    title = (title or "").strip() or "Ingested Episode"
+    guest = (guest or "").strip() or "Unknown Guest"
+
     media_path_or_url = url
     is_video = False
     if url:
@@ -186,11 +236,19 @@ async def create_episode(
             if yt_embed:
                 media_path_or_url = yt_embed
     elif file and hasattr(file, "filename") and file.filename:
-        # Generate signed upload URL format if raw file provided in legacy call
-        from app.services.storage import generate_signed_upload_url
-        upload_info = generate_signed_upload_url(file.filename, file.content_type or "video/mp4")
-        media_path_or_url = upload_info.get("download_url")
-        if file.content_type and file.content_type.startswith("video/"):
+        filename = file.filename
+        clean_stem = re.sub(r'[^a-zA-Z0-9_-]', '', Path(filename).stem) or "media"
+        ext = Path(filename).suffix or ".mp4"
+        unique_name = f"{clean_stem}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}{ext}"
+        file_path = UPLOAD_DIR / unique_name
+        
+        contents = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(contents)
+            
+        public_url = os.getenv("PUBLIC_URL", "http://localhost:8000").rstrip("/")
+        media_path_or_url = f"{public_url}/api/v1/episodes/media/{unique_name}"
+        if file.content_type and (file.content_type.startswith("video/") or ext.lower() in [".mp4", ".mov", ".webm", ".mkv", ".avi"]):
             is_video = True
 
     if not media_path_or_url:
@@ -242,10 +300,12 @@ async def create_episode(
 
 @router.post("/ingest", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 async def ingest_episode(
+    request: Request,
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None)
 ):
     return await create_episode(
+        request=request,
         title="Ingested Episode",
         guest="Unknown Guest",
         file=file,

@@ -560,7 +560,11 @@ class BeanieDatabaseService:
         if self.is_configured and self.client is not None:
             try:
                 users = await User.find_all().to_list()
-                return [{"id": u.id, **u.model_dump()} for u in users]
+                mongo_users = [{"id": u.id, **u.model_dump()} for u in users]
+                if mongo_users:
+                    self._in_memory_users = mongo_users
+                    self._save_users_to_file()
+                    return mongo_users
             except Exception as e:
                 print(f"[DB ERROR] MongoDB get_users failure: {e}")
         return self._in_memory_users
@@ -591,9 +595,7 @@ class BeanieDatabaseService:
             "suspended": False,
             "is_verified": True
         }
-        self._in_memory_users.append(new_u)
-        self._save_users_to_file()
-        
+
         if self.is_configured and self.client is not None:
             try:
                 new_user = User(
@@ -607,12 +609,17 @@ class BeanieDatabaseService:
                     is_verified=True
                 )
                 await new_user.insert()
-                return {"id": new_user.id, **new_user.model_dump()}
             except Exception as e:
                 print(f"MongoDB create_user notice: {e}")
+
+        # Maintain in-memory and disk backup
+        self._in_memory_users = [u for u in self._in_memory_users if u.get("id") != new_id and u.get("email", "").strip().lower() != clean_email]
+        self._in_memory_users.append(new_u)
+        self._save_users_to_file()
         return new_u
 
     async def update_user(self, user_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        await self.ensure_db_initialized()
         clean_target = user_id.strip().lower()
         target_user = None
         for u in self._in_memory_users:
@@ -638,6 +645,7 @@ class BeanieDatabaseService:
         return target_user
 
     async def delete_user(self, user_id: str) -> bool:
+        await self.ensure_db_initialized()
         clean_target = user_id.strip().lower()
         deleted = False
         
@@ -675,11 +683,18 @@ class BeanieDatabaseService:
 
     # API Keys Operations
     async def get_api_keys(self) -> Dict[str, str]:
+        await self.ensure_db_initialized()
+        
         keys = {
             "openai": self._in_memory_api_keys.get("openai", ""),
             "deepgram": self._in_memory_api_keys.get("deepgram", ""),
             "elevenlabs": self._in_memory_api_keys.get("elevenlabs", "")
         }
+
+        def is_real_key(val: Optional[str]) -> bool:
+            if not val: return False
+            val_str = str(val).strip()
+            return not ("..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-...")))
 
         # Query MongoDB document if database is configured
         if self.is_configured and self.client is not None:
@@ -688,13 +703,13 @@ class BeanieDatabaseService:
                 if doc:
                     if doc.openai:
                         raw = decrypt_key(doc.openai[4:]) if doc.openai.startswith("enc:") else doc.openai
-                        if raw: keys["openai"] = raw
+                        if is_real_key(raw): keys["openai"] = raw
                     if doc.deepgram:
                         raw = decrypt_key(doc.deepgram[4:]) if doc.deepgram.startswith("enc:") else doc.deepgram
-                        if raw: keys["deepgram"] = raw
+                        if is_real_key(raw): keys["deepgram"] = raw
                     if doc.elevenlabs:
                         raw = decrypt_key(doc.elevenlabs[4:]) if doc.elevenlabs.startswith("enc:") else doc.elevenlabs
-                        if raw: keys["elevenlabs"] = raw
+                        if is_real_key(raw): keys["elevenlabs"] = raw
             except Exception as e:
                 print(f"MongoDB API keys read warning: {e}")
 
@@ -705,30 +720,51 @@ class BeanieDatabaseService:
         except Exception:
             env_file_data = {}
 
-        if not keys.get("openai"):
-            keys["openai"] = env_file_data.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
-        if not keys.get("deepgram"):
-            keys["deepgram"] = env_file_data.get("DEEPGRAM_API_KEY") or os.getenv("DEEPGRAM_API_KEY", "")
-        if not keys.get("elevenlabs"):
-            keys["elevenlabs"] = env_file_data.get("ELEVENLABS_API_KEY") or os.getenv("ELEVENLABS_API_KEY", "")
+        if not is_real_key(keys.get("openai")):
+            env_val = env_file_data.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+            if is_real_key(env_val): keys["openai"] = env_val.strip()
+
+        if not is_real_key(keys.get("deepgram")):
+            env_val = env_file_data.get("DEEPGRAM_API_KEY") or os.getenv("DEEPGRAM_API_KEY", "")
+            if is_real_key(env_val): keys["deepgram"] = env_val.strip()
+
+        if not is_real_key(keys.get("elevenlabs")):
+            env_val = env_file_data.get("ELEVENLABS_API_KEY") or os.getenv("ELEVENLABS_API_KEY", "")
+            if is_real_key(env_val): keys["elevenlabs"] = env_val.strip()
 
         # Update in-memory dict and process environment variables
         self._in_memory_api_keys.update(keys)
+        self._save_api_keys_to_file()
+
         for k, v in keys.items():
-            if v:
+            if v and is_real_key(v):
                 os.environ[f"{k.upper()}_API_KEY"] = v
 
         return keys
 
     async def update_api_keys(self, keys_dict: Dict[str, str]) -> Dict[str, str]:
-        # Clean and update in-memory cache & os.environ
+        await self.ensure_db_initialized()
+        
+        current_keys = await self.get_api_keys()
+
+        def is_masked_or_invalid(val: Optional[str]) -> bool:
+            if not val: return True
+            val_str = str(val).strip()
+            return "..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-..."))
+
+        resolved = {}
         for k in ["openai", "deepgram", "elevenlabs"]:
-            if k in keys_dict and keys_dict[k] is not None:
-                val = keys_dict[k].strip()
-                # Exclude masked placeholders from overriding valid stored keys
-                if val and not ("..." in val or "[masked]" in val or val.startswith(("sk-...", "dg-...", "el-..."))):
-                    self._in_memory_api_keys[k] = val
-                    os.environ[f"{k.upper()}_API_KEY"] = val
+            in_val = keys_dict.get(k)
+            if in_val is not None and not is_masked_or_invalid(in_val):
+                clean_v = in_val.strip()
+                resolved[k] = clean_v
+                self._in_memory_api_keys[k] = clean_v
+                os.environ[f"{k.upper()}_API_KEY"] = clean_v
+            else:
+                resolved[k] = current_keys.get(k, "")
+                if resolved[k]:
+                    self._in_memory_api_keys[k] = resolved[k]
+                    os.environ[f"{k.upper()}_API_KEY"] = resolved[k]
 
         # Persist to disk JSON file
         self._save_api_keys_to_file()
@@ -741,18 +777,12 @@ class BeanieDatabaseService:
                     doc = APIKeysDocument(id="1", deepgram="", openai="", elevenlabs="")
                     await doc.insert()
 
-                current = dict(self._in_memory_api_keys)
-                
-                openai_val = keys_dict.get("openai") or current.get("openai", "")
-                deepgram_val = keys_dict.get("deepgram") or current.get("deepgram", "")
-                elevenlabs_val = keys_dict.get("elevenlabs") or current.get("elevenlabs", "")
-
-                if openai_val and not ("..." in openai_val or "[masked]" in openai_val):
-                    doc.openai = f"enc:{encrypt_key(openai_val)}"
-                if deepgram_val and not ("..." in deepgram_val or "[masked]" in deepgram_val):
-                    doc.deepgram = f"enc:{encrypt_key(deepgram_val)}"
-                if elevenlabs_val and not ("..." in elevenlabs_val or "[masked]" in elevenlabs_val):
-                    doc.elevenlabs = f"enc:{encrypt_key(elevenlabs_val)}"
+                if resolved.get("openai"):
+                    doc.openai = f"enc:{encrypt_key(resolved['openai'])}"
+                if resolved.get("deepgram"):
+                    doc.deepgram = f"enc:{encrypt_key(resolved['deepgram'])}"
+                if resolved.get("elevenlabs"):
+                    doc.elevenlabs = f"enc:{encrypt_key(resolved['elevenlabs'])}"
 
                 await doc.save()
             except Exception as e:
@@ -762,9 +792,9 @@ class BeanieDatabaseService:
         try:
             from app.services.env_manager import update_env_file
             env_updates = {}
-            if self._in_memory_api_keys.get("openai"): env_updates["OPENAI_API_KEY"] = self._in_memory_api_keys["openai"]
-            if self._in_memory_api_keys.get("deepgram"): env_updates["DEEPGRAM_API_KEY"] = self._in_memory_api_keys["deepgram"]
-            if self._in_memory_api_keys.get("elevenlabs"): env_updates["ELEVENLABS_API_KEY"] = self._in_memory_api_keys["elevenlabs"]
+            if resolved.get("openai"): env_updates["OPENAI_API_KEY"] = resolved["openai"]
+            if resolved.get("deepgram"): env_updates["DEEPGRAM_API_KEY"] = resolved["deepgram"]
+            if resolved.get("elevenlabs"): env_updates["ELEVENLABS_API_KEY"] = resolved["elevenlabs"]
             if env_updates:
                 update_env_file(env_updates)
         except Exception as e:

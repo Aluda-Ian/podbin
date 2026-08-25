@@ -132,16 +132,12 @@ async def validate_openai_api_key(api_key: str) -> bool:
                 headers={"Authorization": f"Bearer {api_key}"},
                 follow_redirects=True
             )
-            # 200 = valid key; 429 = valid key but quota exceeded; 401 = invalid
+            # 200 = valid key; 429 = valid key but quota exceeded / rate limited
             if response.status_code in (200, 429):
                 return True
-            elif response.status_code == 401:
-                return False
-            # Be lenient on temporary network or server status codes (5xx, etc)
-            return response.status_code < 500
+            return False
     except Exception:
-        # Fall back to checking key format if network check fails
-        return api_key.startswith("sk-")
+        return False
 
 
 async def validate_deepgram_api_key(api_key: str) -> bool:
@@ -158,17 +154,25 @@ async def validate_deepgram_api_key(api_key: str) -> bool:
             )
             if response.status_code in (200, 402, 429):
                 return True
-            elif response.status_code == 401:
-                # Try fallback models endpoint in case key is project-scoped
-                resp2 = await client.get(
-                    "https://api.deepgram.com/v1/models",
-                    headers={"Authorization": f"Token {api_key}"},
+            
+            # If 401/403, test transcription endpoint with a minimal WAV header
+            # to verify project-scoped keys without relying on public endpoints
+            if response.status_code in (401, 403):
+                wav_header = b'RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00'
+                resp2 = await client.post(
+                    "https://api.deepgram.com/v1/listen?model=nova-2",
+                    headers={"Authorization": f"Token {api_key}", "Content-Type": "audio/wav"},
+                    content=wav_header,
                     follow_redirects=True
                 )
-                return resp2.status_code in (200, 402, 429)
-            return response.status_code < 500
+                if resp2.status_code in (200, 400, 402, 429):
+                    if resp2.status_code == 400 and "INVALID_AUTH" in resp2.text:
+                        return False
+                    return True
+                return False
+            return False
     except Exception:
-        return len(api_key) >= 20
+        return False
 
 
 async def validate_elevenlabs_api_key(api_key: str) -> bool:
@@ -183,11 +187,76 @@ async def validate_elevenlabs_api_key(api_key: str) -> bool:
                 headers={"xi-api-key": api_key},
                 follow_redirects=True
             )
-            if response.status_code in (200, 401, 402, 429):
-                return response.status_code != 401
-            return response.status_code < 500
+            if response.status_code in (200, 402, 429):
+                return True
+            return False
     except Exception:
-        return len(api_key) >= 20
+        return False
+
+
+async def validate_anthropic_api_key(api_key: str) -> bool:
+    """Validate Anthropic API key by making a test call"""
+    if not api_key or len(api_key) < 10:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                follow_redirects=True
+            )
+            if response.status_code in (200, 429):
+                return True
+            return False
+    except Exception:
+        return False
+
+
+async def validate_gemini_api_key(api_key: str) -> bool:
+    """Validate Google Gemini API key by making a test call"""
+    if not api_key or len(api_key) < 10:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}",
+                follow_redirects=True
+            )
+            if response.status_code in (200, 429):
+                return True
+            return False
+    except Exception:
+        return False
+
+
+async def validate_deepseek_api_key(api_key: str) -> bool:
+    """Validate DeepSeek API key by making a test call"""
+    if not api_key or len(api_key) < 10:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                "https://api.deepseek.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                follow_redirects=True
+            )
+            if response.status_code in (200, 429):
+                return True
+            return False
+    except Exception:
+        return False
+
+
+async def validate_ollama_connection() -> tuple[bool, str]:
+    """Validate local Ollama service connection"""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get("http://localhost:11434/api/tags")
+            if response.status_code == 200:
+                return True, "Ollama service connected successfully (http://localhost:11434)"
+            return False, f"Ollama service returned status code {response.status_code}"
+    except Exception:
+        return False, "Ollama service is not running or unreachable at http://localhost:11434"
 
 
 async def validate_api_key_format(key_type: str, api_key: str) -> tuple[bool, str]:
@@ -195,38 +264,72 @@ async def validate_api_key_format(key_type: str, api_key: str) -> tuple[bool, st
     Validate both format and authenticity of API key
     Returns (is_valid, error_message)
     """
+    kt = (key_type or "").lower().strip()
+    if kt == "ollama":
+        is_valid, err_msg = await validate_ollama_connection()
+        if not is_valid:
+            return False, err_msg
+        return True, ""
+
     if not api_key or not isinstance(api_key, str):
         return False, f"Invalid {key_type} API key format"
     
     clean_key = api_key.strip()
 
     # Skip validation for masked key placeholders
-    if "..." in clean_key or "[masked]" in clean_key or clean_key.startswith(("sk-...", "dg-...", "el-...")):
+    if clean_key in ("...", "[masked]") or clean_key.startswith(("sk-...", "dg-...", "el-...", "sk-ant-...")):
         return True, ""
-    
-    if key_type == "openai":
-        if not (clean_key.startswith("sk-") or len(clean_key) >= 20):
+    if kt in ("openai", "open_ai"):
+        if not (clean_key.startswith("sk-") or len(clean_key) >= 15):
             return False, "OpenAI key format is invalid"
         is_valid = await validate_openai_api_key(clean_key)
         if not is_valid:
-            return False, "OpenAI API key authentication failed or expired"
+            return False, "OpenAI API key authentication failed or invalid key"
     
-    elif key_type == "deepgram":
+    elif kt == "deepgram":
         if len(clean_key) < 10:
             return False, "Deepgram API key is too short"
         is_valid = await validate_deepgram_api_key(clean_key)
         if not is_valid:
-            return False, "Deepgram API key authentication failed or expired"
+            return False, "Deepgram API key authentication failed or invalid key"
     
-    elif key_type == "elevenlabs":
+    elif kt in ("elevenlabs", "eleven_labs"):
         if len(clean_key) < 10:
             return False, "ElevenLabs API key is too short"
         is_valid = await validate_elevenlabs_api_key(clean_key)
         if not is_valid:
-            return False, "ElevenLabs API key authentication failed or expired"
+            return False, "ElevenLabs API key authentication failed or invalid key"
+    
+    elif kt == "anthropic":
+        if len(clean_key) < 10:
+            return False, "Anthropic API key is too short"
+        is_valid = await validate_anthropic_api_key(clean_key)
+        if not is_valid:
+            return False, "Anthropic API key authentication failed or invalid key"
+            
+    elif kt in ("gemini", "google"):
+        if len(clean_key) < 10:
+            return False, "Gemini API key is too short"
+        is_valid = await validate_gemini_api_key(clean_key)
+        if not is_valid:
+            return False, "Gemini API key authentication failed or invalid key"
+
+    elif kt == "deepseek":
+        if len(clean_key) < 10:
+            return False, "DeepSeek API key is too short"
+        is_valid = await validate_deepseek_api_key(clean_key)
+        if not is_valid:
+            return False, "DeepSeek API key authentication failed or invalid key"
+
+    elif kt == "ollama":
+        is_valid, err_msg = await validate_ollama_connection()
+        if not is_valid:
+            return False, err_msg
+        return True, ""
     
     else:
         return False, f"Unknown key type: {key_type}"
     
     return True, ""
+
 

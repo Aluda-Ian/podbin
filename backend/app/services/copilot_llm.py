@@ -183,11 +183,25 @@ async def run_copilot_chat(
     """Execute Copilot chat prompt using selected LLM provider and utility tools."""
     
     # 1. Resolve Provider Settings
-    provider_info = next((p for p in SUPPORTED_PROVIDERS if p["id"] == provider.lower()), SUPPORTED_PROVIDERS[0])
+    p_id = provider.lower().strip()
+    provider_info = next((p for p in SUPPORTED_PROVIDERS if p["id"] == p_id), SUPPORTED_PROVIDERS[0])
     target_model = model or provider_info["default_model"]
     base_url = provider_info["base_url"]
     
-    env_api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        db_keys = await db.get_api_keys()
+        if p_id in ("openai", "open_ai"):
+            api_key = db_keys.get("openai") or os.getenv("OPENAI_API_KEY", "")
+        elif p_id in ("anthropic", "claude"):
+            api_key = db_keys.get("anthropic") or os.getenv("ANTHROPIC_API_KEY", "")
+        elif p_id in ("gemini", "google"):
+            api_key = db_keys.get("gemini") or os.getenv("GEMINI_API_KEY", "")
+        elif p_id == "deepseek":
+            api_key = db_keys.get("deepseek") or os.getenv("DEEPSEEK_API_KEY", "")
+        else:
+            api_key = db_keys.get(p_id) or os.getenv("OPENAI_API_KEY", "")
+    
+    env_api_key = api_key
     
     # Build System + User Messages
     messages = [
@@ -199,7 +213,7 @@ async def run_copilot_chat(
     tool_result = None
     
     try:
-        if provider == "ollama":
+        if p_id == "ollama":
             # Direct HTTP call to local Ollama server
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
