@@ -303,17 +303,11 @@ class BeanieDatabaseService:
         if not getattr(self, "_beanie_initialized", False):
             try:
                 if self.client is None:
-                    import ssl
-                    ssl_ctx = ssl.create_default_context()
-                    ssl_ctx.check_hostname = False
-                    ssl_ctx.verify_mode = ssl.CERT_NONE
                     self.client = AsyncIOMotorClient(
                         url,
                         serverSelectionTimeoutMS=10000,
                         connectTimeoutMS=10000,
-                        tls=True,
-                        tlsAllowInvalidCertificates=True,
-                        ssl_context=ssl_ctx
+                        tlsInsecure=True
                     )
                 self._init_step = "calling_init_beanie"
                 await init_beanie(
