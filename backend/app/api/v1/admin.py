@@ -107,11 +107,18 @@ Podule Studio Team
 async def get_api_keys(authorization: Optional[str] = Header(None)):
     admin_user = await verify_admin_token(authorization)
     keys = await db.get_api_keys()
-    # Mask key values for security
+    
+    def mask_key(prefix: str, key: str) -> str:
+        if not key: return ""
+        k_str = str(key).strip()
+        if len(k_str) > 8:
+            return f"{prefix}...{k_str[-4:]}"
+        return f"{prefix}..."
+
     return {
-        "deepgram": f"dg-...{keys['deepgram'][-4:]}" if keys.get("deepgram") else "",
-        "openai": f"sk-...{keys['openai'][-4:]}" if keys.get("openai") else "",
-        "elevenlabs": f"el-...{keys['elevenlabs'][-4:]}" if keys.get("elevenlabs") else ""
+        "deepgram": mask_key("dg-", keys.get("deepgram")),
+        "openai": mask_key("sk-", keys.get("openai")),
+        "elevenlabs": mask_key("el-", keys.get("elevenlabs"))
     }
 
 def is_masked_placeholder(val: Optional[str]) -> bool:

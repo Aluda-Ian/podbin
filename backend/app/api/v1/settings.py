@@ -155,12 +155,19 @@ async def get_api_connections(authorization: Optional[str] = Header(None)):
         c_sec = plat_db.get("client_secret") or env_keys.get(f"{plat.upper()}_CLIENT_SECRET", "")
         integration_creds[plat] = {"client_id": c_id, "client_secret": c_sec}
 
+    def mask_key(prefix: str, key: str) -> str:
+        if not key: return ""
+        k_str = str(key).strip()
+        if len(k_str) > 8:
+            return f"{prefix}...{k_str[-4:]}"
+        return f"{prefix}..."
+
     return {
         "api_storage_target": storage_target,
         "api_keys": {
-            "openai": openai_key,
-            "deepgram": deepgram_key,
-            "elevenlabs": elevenlabs_key,
+            "openai": mask_key("sk-", openai_key),
+            "deepgram": mask_key("dg-", deepgram_key),
+            "elevenlabs": mask_key("el-", elevenlabs_key),
         },
         "integration_credentials": integration_creds
     }
