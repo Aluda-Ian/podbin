@@ -278,7 +278,7 @@ class BeanieDatabaseService:
         if self.is_configured and not getattr(self, "_beanie_initialized", False):
             try:
                 import asyncio
-                await asyncio.wait_for(self.init_db(), timeout=3.0)
+                await asyncio.wait_for(self.init_db(), timeout=8.0)
             except Exception as e:
                 self._last_error = f"ensure_db_initialized error: {type(e).__name__} - {str(e)}"
                 print(f"[DB ERROR] Lazy init_db failure or timeout: {e}")
@@ -316,7 +316,8 @@ class BeanieDatabaseService:
                         SettingsDocument,
                         APIKeysDocument,
                         Notification
-                    ]
+                    ],
+                    skip_indexes=True
                 )
                 self._beanie_initialized = True
                 self._last_error = None
