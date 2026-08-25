@@ -17,8 +17,17 @@ from pydantic import BaseModel
 
 
 router = APIRouter()
-UPLOAD_DIR = Path("static/uploads")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+def get_upload_dir() -> Path:
+    if os.getenv("VERCEL"):
+        upload_dir = Path("/tmp/uploads")
+    else:
+        upload_dir = Path("static/uploads")
+    try:
+        upload_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return upload_dir
 
 async def run_deepgram_transcription_pipeline(audio_url: str, timestamps: bool = True) -> dict:
     from app.services.llm import run_local_whisper_transcription
@@ -90,17 +99,23 @@ async def get_upload_url(payload: UploadUrlRequest = Body(...)):
 async def upload_file_direct(filename: str, request: Request):
     """Receive direct file stream for local dev / fallback object storage."""
     clean_fn = Path(filename).name
-    file_path = UPLOAD_DIR / clean_fn
+    upload_dir = get_upload_dir()
+    file_path = upload_dir / clean_fn
     body = await request.body()
-    with open(file_path, "wb") as f:
-        f.write(body)
+    try:
+        with open(file_path, "wb") as f:
+            f.write(body)
+    except Exception as e:
+        print(f"Direct file write notice: {e}")
     return {"status": "success", "filename": clean_fn, "size": len(body)}
 
 @router.get("/media/{filename}")
 async def serve_media_file(filename: str):
     """Serve uploaded media file for playback and processing."""
     clean_fn = Path(filename).name
-    file_path = UPLOAD_DIR / clean_fn
+    file_path = get_upload_dir() / clean_fn
+    if not file_path.exists():
+        file_path = Path("static/uploads") / clean_fn
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Media file not found")
     
@@ -240,11 +255,15 @@ async def create_episode(
         clean_stem = re.sub(r'[^a-zA-Z0-9_-]', '', Path(filename).stem) or "media"
         ext = Path(filename).suffix or ".mp4"
         unique_name = f"{clean_stem}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}{ext}"
-        file_path = UPLOAD_DIR / unique_name
+        upload_dir = get_upload_dir()
+        file_path = upload_dir / unique_name
         
         contents = await file.read()
-        with open(file_path, "wb") as f:
-            f.write(contents)
+        try:
+            with open(file_path, "wb") as f:
+                f.write(contents)
+        except Exception as e:
+            print(f"File save notice: {e}")
             
         public_url = os.getenv("PUBLIC_URL", "http://localhost:8000").rstrip("/")
         media_path_or_url = f"{public_url}/api/v1/episodes/media/{unique_name}"

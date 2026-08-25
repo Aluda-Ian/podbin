@@ -165,10 +165,15 @@ class BeanieDatabaseService:
         ]
         return default_users
 
+    def get_static_file_path(self, filename: str) -> Path:
+        if os.getenv("VERCEL"):
+            return Path("/tmp") / filename
+        return Path("static") / filename
+
     def _save_users_to_file(self):
         try:
             import json
-            file_path = Path("static") / "users_data.json"
+            file_path = self.get_static_file_path("users_data.json")
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(self._in_memory_users, f, indent=2, default=str)
@@ -176,7 +181,7 @@ class BeanieDatabaseService:
             print(f"Error saving users file: {e}")
 
     def _load_episodes_from_file(self) -> List[Dict[str, Any]]:
-        file_path = Path("static") / "episodes_data.json"
+        file_path = self.get_static_file_path("episodes_data.json")
         if file_path.exists():
             try:
                 import json
@@ -191,7 +196,7 @@ class BeanieDatabaseService:
     def _save_episodes_to_file(self):
         try:
             import json
-            file_path = Path("static") / "episodes_data.json"
+            file_path = self.get_static_file_path("episodes_data.json")
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(self._in_memory_episodes, f, indent=2, default=str)
@@ -199,7 +204,7 @@ class BeanieDatabaseService:
             print(f"Error saving episodes file: {e}")
 
     def _load_settings_from_file(self) -> Dict[str, Any]:
-        file_path = Path("static") / "settings_data.json"
+        file_path = self.get_static_file_path("settings_data.json")
         if file_path.exists():
             try:
                 import json
@@ -223,7 +228,7 @@ class BeanieDatabaseService:
     def _save_settings_to_file(self):
         try:
             import json
-            file_path = Path("static") / "settings_data.json"
+            file_path = self.get_static_file_path("settings_data.json")
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(self._in_memory_settings, f, indent=2, default=str)
@@ -231,7 +236,7 @@ class BeanieDatabaseService:
             print(f"Error saving settings file: {e}")
 
     def _load_api_keys_from_file(self) -> Dict[str, str]:
-        file_path = Path("static") / "api_keys_data.json"
+        file_path = self.get_static_file_path("api_keys_data.json")
         if file_path.exists():
             try:
                 import json
@@ -246,7 +251,7 @@ class BeanieDatabaseService:
     def _save_api_keys_to_file(self):
         try:
             import json
-            file_path = Path("static") / "api_keys_data.json"
+            file_path = self.get_static_file_path("api_keys_data.json")
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(self._in_memory_api_keys, f, indent=2, default=str)

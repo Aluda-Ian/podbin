@@ -107,13 +107,16 @@ async def add_no_cache_header(request, call_next):
 public_dir = find_public_dir()
 
 # Mount static files folder dynamically for EDL edits safely
-static_dir = BACKEND_DIR / "static"
+static_dir = Path("/tmp/static") if os.getenv("VERCEL") else (BACKEND_DIR / "static")
 try:
-    static_dir.mkdir(exist_ok=True)
+    static_dir.mkdir(parents=True, exist_ok=True)
 except Exception:
     pass
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+if static_dir.exists() and static_dir.is_dir():
+    try:
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    except Exception as e:
+        print(f"Notice: static mount warning: {e}")
 
 # Mount logos directory safely
 logos_dir = public_dir / "logos"
@@ -121,13 +124,19 @@ try:
     logos_dir.mkdir(parents=True, exist_ok=True)
 except Exception:
     pass
-if logos_dir.exists():
-    app.mount("/logos", StaticFiles(directory=logos_dir), name="logos")
+if logos_dir.exists() and logos_dir.is_dir():
+    try:
+        app.mount("/logos", StaticFiles(directory=logos_dir), name="logos")
+    except Exception as e:
+        print(f"Notice: logos mount warning: {e}")
 
 # Serve compiled frontend assets safely
 assets_dir = public_dir / "assets"
-if assets_dir.exists():
-    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+if assets_dir.exists() and assets_dir.is_dir():
+    try:
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+    except Exception as e:
+        print(f"Notice: assets mount warning: {e}")
 
 # Basic health-check endpoint
 @app.get("/health", status_code=200)
