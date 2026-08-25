@@ -70,7 +70,8 @@ def find_public_dir() -> Path:
 async def lifespan(app: FastAPI):
     if db.is_configured:
         try:
-            await db.init_db()
+            import asyncio
+            await asyncio.wait_for(db.init_db(), timeout=2.0)
         except Exception as e:
             print(f"Warning: Database initialization failed on startup: {e}")
     else:

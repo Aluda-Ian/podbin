@@ -255,36 +255,51 @@ class BeanieDatabaseService:
 
     @property
     def is_configured(self) -> bool:
-        return bool(MONGODB_URL and (MONGODB_URL.startswith("mongodb://") or MONGODB_URL.startswith("mongodb+srv://")))
+        if not MONGODB_URL:
+            return False
+        # On Vercel cloud serverless, localhost / 127.0.0.1 MongoDB URLs are unreachable and must be disabled
+        if os.getenv("VERCEL") and ("localhost" in MONGODB_URL or "127.0.0.1" in MONGODB_URL):
+            return False
+        return bool(MONGODB_URL.startswith("mongodb://") or MONGODB_URL.startswith("mongodb+srv://"))
 
     async def ensure_db_initialized(self):
         if self.is_configured and (self.client is None or not getattr(self, "_beanie_initialized", False)):
             try:
-                await self.init_db()
+                import asyncio
+                await asyncio.wait_for(self.init_db(), timeout=2.0)
             except Exception as e:
-                print(f"[DB ERROR] Lazy init_db failure: {e}")
+                print(f"[DB ERROR] Lazy init_db failure or timeout: {e}")
 
     async def init_db(self):
         if not self.is_configured:
-            print("[CRITICAL DB WARNING] MONGODB_URI/MONGODB_URL is not set in environment variables! App is operating in unpersisted fallback mode.")
+            print("[CRITICAL DB WARNING] MONGODB_URI/MONGODB_URL is not set or points to unreachable localhost on Vercel! Operating in fallback mode.")
             return
         if self.client is None:
-            self.client = AsyncIOMotorClient(MONGODB_URL)
+            self.client = AsyncIOMotorClient(
+                MONGODB_URL,
+                serverSelectionTimeoutMS=2000,
+                connectTimeoutMS=2000
+            )
         
         if not getattr(self, "_beanie_initialized", False):
-            await init_beanie(
-                database=self.client[db_name],
-                document_models=[
-                    User,
-                    Episode,
-                    Approval,
-                    Agent,
-                    SettingsDocument,
-                    APIKeysDocument,
-                    Notification
-                ]
-            )
-            self._beanie_initialized = True
+            try:
+                await init_beanie(
+                    database=self.client[db_name],
+                    document_models=[
+                        User,
+                        Episode,
+                        Approval,
+                        Agent,
+                        SettingsDocument,
+                        APIKeysDocument,
+                        Notification
+                    ]
+                )
+                self._beanie_initialized = True
+            except Exception as e:
+                print(f"[DB ERROR] init_beanie failed: {e}")
+                self.client = None
+                return
         
         # Seed default admin users ONLY if the MongoDB User collection is completely empty
         try:
