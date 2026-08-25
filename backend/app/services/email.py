@@ -49,9 +49,9 @@ async def send_email(
         try:
             print(f"[EMAIL] Attempting email to {to} via {host}:{port}...")
             if port == 465:
-                server = smtplib.SMTP_SSL(host, port, timeout=10, context=ssl_context)
+                server = smtplib.SMTP_SSL(host, port, timeout=2, context=ssl_context)
             else:
-                server = smtplib.SMTP(host, port, timeout=10)
+                server = smtplib.SMTP(host, port, timeout=2)
                 try:
                     server.starttls(context=ssl_context)
                 except Exception as tls_err:
