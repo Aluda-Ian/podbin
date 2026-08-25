@@ -280,6 +280,7 @@ class BeanieDatabaseService:
                 import asyncio
                 await asyncio.wait_for(self.init_db(), timeout=10.0)
             except Exception as e:
+                self._last_error = f"ensure_db_initialized error: {type(e).__name__} - {str(e)}"
                 print(f"[DB ERROR] Lazy init_db failure or timeout: {e}")
 
     async def init_db(self):
