@@ -302,7 +302,7 @@ class BeanieDatabaseService:
                         connectTimeoutMS=10000
                     )
                 await init_beanie(
-                    database=self.client[target_db],
+                    database=self.client.get_database(target_db),
                     document_models=[
                         User,
                         Episode,
