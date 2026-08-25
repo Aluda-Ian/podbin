@@ -279,15 +279,19 @@ class BeanieDatabaseService:
         if not self.is_configured:
             print("[CRITICAL DB WARNING] MONGODB_URI/MONGODB_URL is not set or points to unreachable localhost on Vercel! Operating in fallback mode.")
             return
-        if self.client is None:
-            self.client = AsyncIOMotorClient(
-                MONGODB_URL,
-                serverSelectionTimeoutMS=2000,
-                connectTimeoutMS=2000
-            )
+
+        parsed_url = urlparse(MONGODB_URL)
+        hostname = parsed_url.hostname or "unknown-host"
+        print(f"[MONGODB ATTEMPTING CONNECT] Host: {hostname} | Database: {db_name}")
         
         if not getattr(self, "_beanie_initialized", False):
             try:
+                if self.client is None:
+                    self.client = AsyncIOMotorClient(
+                        MONGODB_URL,
+                        serverSelectionTimeoutMS=2000,
+                        connectTimeoutMS=2000
+                    )
                 await init_beanie(
                     database=self.client[db_name],
                     document_models=[
@@ -301,9 +305,11 @@ class BeanieDatabaseService:
                     ]
                 )
                 self._beanie_initialized = True
+                print(f"[MONGODB CONNECTED SUCCESS] Successfully initialized Beanie models for DB '{db_name}' on Host '{hostname}'")
             except Exception as e:
-                print(f"[DB ERROR] init_beanie failed: {e}")
+                print(f"[MONGODB ERROR] init_beanie failed for DB '{db_name}' on Host '{hostname}': {e}")
                 self.client = None
+                self._beanie_initialized = False
                 return
         
         # Seed default admin users ONLY if the MongoDB User collection is completely empty
