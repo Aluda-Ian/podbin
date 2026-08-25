@@ -301,8 +301,10 @@ class BeanieDatabaseService:
                 if self.client is None:
                     self.client = AsyncIOMotorClient(
                         url,
-                        serverSelectionTimeoutMS=3000,
-                        connectTimeoutMS=3000
+                        serverSelectionTimeoutMS=10000,
+                        connectTimeoutMS=10000,
+                        tls=True,
+                        tlsAllowInvalidCertificates=True
                     )
                 self._init_step = "calling_init_beanie"
                 await init_beanie(
