@@ -295,25 +295,40 @@ class BeanieDatabaseService:
         
         if not getattr(self, "_beanie_initialized", False):
             try:
-                if self.client is None:
-                    self.client = AsyncIOMotorClient(
-                        url,
-                        serverSelectionTimeoutMS=10000,
-                        connectTimeoutMS=10000
+                try:
+                    await init_beanie(
+                        connection_string=url,
+                        document_models=[
+                            User,
+                            Episode,
+                            Approval,
+                            Agent,
+                            SettingsDocument,
+                            APIKeysDocument,
+                            Notification
+                        ]
                     )
-                await init_beanie(
-                    database=self.client.get_database(target_db),
-                    document_models=[
-                        User,
-                        Episode,
-                        Approval,
-                        Agent,
-                        SettingsDocument,
-                        APIKeysDocument,
-                        Notification
-                    ]
-                )
+                except Exception as e1:
+                    if self.client is None:
+                        self.client = AsyncIOMotorClient(
+                            url,
+                            serverSelectionTimeoutMS=10000,
+                            connectTimeoutMS=10000
+                        )
+                    await init_beanie(
+                        database=self.client.get_database(target_db),
+                        document_models=[
+                            User,
+                            Episode,
+                            Approval,
+                            Agent,
+                            SettingsDocument,
+                            APIKeysDocument,
+                            Notification
+                        ]
+                    )
                 self._beanie_initialized = True
+                self._last_error = None
                 print(f"[MONGODB CONNECTED SUCCESS] Successfully initialized Beanie models for DB '{target_db}' on Host '{hostname}'")
             except Exception as e:
                 self._last_error = f"{type(e).__name__}: {str(e)}"
