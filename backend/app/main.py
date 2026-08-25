@@ -167,6 +167,7 @@ async def db_status():
     return {
         "is_configured": db.is_configured,
         "is_db_ready": db.is_db_ready,
+        "init_step": getattr(db, "_init_step", None),
         "last_error": getattr(db, "_last_error", None),
         "mongodb_url_set": bool(url),
         "mongodb_host": parsed.hostname or "none",

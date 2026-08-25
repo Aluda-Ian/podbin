@@ -284,7 +284,9 @@ class BeanieDatabaseService:
                 print(f"[DB ERROR] Lazy init_db failure or timeout: {e}")
 
     async def init_db(self):
+        self._init_step = "Starting init_db"
         if not self.is_configured:
+            self._init_step = "not_configured"
             print("[CRITICAL DB WARNING] MONGODB_URI/MONGODB_URL is not set or points to unreachable localhost on Vercel! Operating in fallback mode.")
             return
 
@@ -292,6 +294,7 @@ class BeanieDatabaseService:
         target_db = get_db_name()
         parsed_url = urlparse(url)
         hostname = parsed_url.hostname or "unknown-host"
+        self._init_step = f"attempting_connect_{hostname}"
         print(f"[MONGODB ATTEMPTING CONNECT] Host: {hostname} | Database: {target_db}")
         
         if not getattr(self, "_beanie_initialized", False):
@@ -302,6 +305,7 @@ class BeanieDatabaseService:
                         serverSelectionTimeoutMS=10000,
                         connectTimeoutMS=10000
                     )
+                self._init_step = "calling_init_beanie"
                 await init_beanie(
                     database=self.client.get_database(target_db),
                     document_models=[
@@ -316,9 +320,11 @@ class BeanieDatabaseService:
                 )
                 self._beanie_initialized = True
                 self._last_error = None
+                self._init_step = "beanie_initialized_success"
                 print(f"[MONGODB CONNECTED SUCCESS] Successfully initialized Beanie models for DB '{target_db}' on Host '{hostname}'")
             except Exception as e:
                 self._last_error = f"{type(e).__name__}: {str(e)}"
+                self._init_step = f"init_beanie_failed_{type(e).__name__}"
                 print(f"[MONGODB ERROR] init_beanie failed for DB '{target_db}' on Host '{hostname}': {e}")
                 self.client = None
                 self._beanie_initialized = False
