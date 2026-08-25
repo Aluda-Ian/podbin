@@ -299,11 +299,12 @@ class BeanieDatabaseService:
         if not getattr(self, "_beanie_initialized", False):
             try:
                 if self.client is None:
+                    import certifi
                     self.client = AsyncIOMotorClient(
                         url,
                         serverSelectionTimeoutMS=10000,
                         connectTimeoutMS=10000,
-                        tlsInsecure=True
+                        tlsCAFile=certifi.where()
                     )
                 self._init_step = "calling_init_beanie"
                 await init_beanie(
