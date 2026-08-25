@@ -277,11 +277,10 @@ class BeanieDatabaseService:
     async def ensure_db_initialized(self):
         if self.is_configured and not getattr(self, "_beanie_initialized", False):
             try:
-                import asyncio
-                await asyncio.wait_for(self.init_db(), timeout=8.0)
+                await self.init_db()
             except Exception as e:
                 self._last_error = f"ensure_db_initialized error: {type(e).__name__} - {str(e)}"
-                print(f"[DB ERROR] Lazy init_db failure or timeout: {e}")
+                print(f"[DB ERROR] Lazy init_db failure: {e}")
 
     async def init_db(self):
         self._init_step = "Starting init_db"
