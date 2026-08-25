@@ -272,10 +272,10 @@ class BeanieDatabaseService:
 
     @property
     def is_db_ready(self) -> bool:
-        return bool(self.is_configured and self.client is not None and getattr(self, "_beanie_initialized", False))
+        return bool(self.is_configured and getattr(self, "_beanie_initialized", False))
 
     async def ensure_db_initialized(self):
-        if self.is_configured and (self.client is None or not getattr(self, "_beanie_initialized", False)):
+        if self.is_configured and not getattr(self, "_beanie_initialized", False):
             try:
                 import asyncio
                 await asyncio.wait_for(self.init_db(), timeout=10.0)
@@ -295,38 +295,24 @@ class BeanieDatabaseService:
         
         if not getattr(self, "_beanie_initialized", False):
             try:
-                try:
-                    await init_beanie(
-                        connection_string=url,
-                        document_models=[
-                            User,
-                            Episode,
-                            Approval,
-                            Agent,
-                            SettingsDocument,
-                            APIKeysDocument,
-                            Notification
-                        ]
+                if self.client is None:
+                    self.client = AsyncIOMotorClient(
+                        url,
+                        serverSelectionTimeoutMS=10000,
+                        connectTimeoutMS=10000
                     )
-                except Exception as e1:
-                    if self.client is None:
-                        self.client = AsyncIOMotorClient(
-                            url,
-                            serverSelectionTimeoutMS=10000,
-                            connectTimeoutMS=10000
-                        )
-                    await init_beanie(
-                        database=self.client.get_database(target_db),
-                        document_models=[
-                            User,
-                            Episode,
-                            Approval,
-                            Agent,
-                            SettingsDocument,
-                            APIKeysDocument,
-                            Notification
-                        ]
-                    )
+                await init_beanie(
+                    database=self.client.get_database(target_db),
+                    document_models=[
+                        User,
+                        Episode,
+                        Approval,
+                        Agent,
+                        SettingsDocument,
+                        APIKeysDocument,
+                        Notification
+                    ]
+                )
                 self._beanie_initialized = True
                 self._last_error = None
                 print(f"[MONGODB CONNECTED SUCCESS] Successfully initialized Beanie models for DB '{target_db}' on Host '{hostname}'")
