@@ -604,11 +604,14 @@ class BeanieDatabaseService:
         if self.is_db_ready:
             try:
                 users = await User.find_all().to_list()
-                mongo_users = [{"id": u.id, **u.model_dump()} for u in users]
-                if mongo_users:
-                    self._in_memory_users = mongo_users
-                    self._save_users_to_file()
-                    return mongo_users
+                mongo_users = []
+                for u in users:
+                    u_dict = u.model_dump()
+                    u_dict["id"] = u.id or u_dict.get("id")
+                    mongo_users.append(u_dict)
+                self._in_memory_users = mongo_users
+                self._save_users_to_file()
+                return mongo_users
             except Exception as e:
                 print(f"[DB ERROR] MongoDB get_users failure: {e}")
         return self._in_memory_users
@@ -622,10 +625,16 @@ class BeanieDatabaseService:
     async def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
         await self.ensure_db_initialized()
         clean_email = user_data.get("email", "").strip().lower()
-        existing_users = await self.get_users()
-        for u in existing_users:
-            if u.get("email", "").strip().lower() == clean_email:
-                return u
+        
+        if self.is_db_ready:
+            try:
+                existing = await User.find_one(User.email == clean_email)
+                if existing:
+                    u_dict = existing.model_dump()
+                    u_dict["id"] = existing.id or u_dict.get("id")
+                    return u_dict
+            except Exception as e:
+                print(f"[DB] find_one existing user notice: {e}")
 
         import secrets
         new_id = user_data.get("id") or f"user-{secrets.token_hex(6)}"
@@ -653,10 +662,16 @@ class BeanieDatabaseService:
                     is_verified=True
                 )
                 await new_user.insert()
+                print(f"[DB ATLAS SUCCESS] Created user {clean_email} (ID: {new_id}) in MongoDB Atlas!")
+                u_dict = new_user.model_dump()
+                u_dict["id"] = new_id
+                return u_dict
             except Exception as e:
-                print(f"MongoDB create_user notice: {e}")
+                print(f"[DB ATLAS ERROR] MongoDB create_user failure: {e}")
+                if self.is_configured:
+                    raise RuntimeError(f"Failed to persist user to MongoDB Atlas: {e}")
 
-        # Maintain in-memory and disk backup
+        # Maintain in-memory and disk backup fallback if DB not configured
         self._in_memory_users = [u for u in self._in_memory_users if u.get("id") != new_id and u.get("email", "").strip().lower() != clean_email]
         self._in_memory_users.append(new_u)
         self._save_users_to_file()
