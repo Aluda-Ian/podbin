@@ -156,6 +156,7 @@ async def db_status():
     
     url = get_mongodb_url()
     parsed = urlparse(url)
+    await db.ensure_db_initialized()
     user_count = None
     if db.is_db_ready:
         try:
@@ -166,6 +167,7 @@ async def db_status():
     return {
         "is_configured": db.is_configured,
         "is_db_ready": db.is_db_ready,
+        "last_error": getattr(db, "_last_error", None),
         "mongodb_url_set": bool(url),
         "mongodb_host": parsed.hostname or "none",
         "db_name": get_db_name(),

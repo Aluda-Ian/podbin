@@ -316,6 +316,7 @@ class BeanieDatabaseService:
                 self._beanie_initialized = True
                 print(f"[MONGODB CONNECTED SUCCESS] Successfully initialized Beanie models for DB '{target_db}' on Host '{hostname}'")
             except Exception as e:
+                self._last_error = f"{type(e).__name__}: {str(e)}"
                 print(f"[MONGODB ERROR] init_beanie failed for DB '{target_db}' on Host '{hostname}': {e}")
                 self.client = None
                 self._beanie_initialized = False
