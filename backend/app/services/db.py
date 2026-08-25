@@ -33,7 +33,11 @@ def decrypt_key(enc_key: str) -> str:
 
 # Configure MongoDB connection dynamically from environment URL
 def get_mongodb_url() -> str:
-    return os.getenv("MONGODB_URL", os.getenv("MONGODB_URI", os.getenv("NONGODB_URL", os.getenv("DATABASE_URL", "")))).strip()
+    url = os.getenv("MONGODB_URL", os.getenv("MONGODB_URI", os.getenv("NONGODB_URL", os.getenv("DATABASE_URL", "")))).strip()
+    if url and "tlsAllowInvalidCertificates" not in url and os.getenv("VERCEL"):
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}tlsAllowInvalidCertificates=true"
+    return url
 
 def get_db_name() -> str:
     url = get_mongodb_url()
@@ -302,9 +306,7 @@ class BeanieDatabaseService:
                     self.client = AsyncIOMotorClient(
                         url,
                         serverSelectionTimeoutMS=10000,
-                        connectTimeoutMS=10000,
-                        tls=True,
-                        tlsAllowInvalidCertificates=True
+                        connectTimeoutMS=10000
                     )
                 self._init_step = "calling_init_beanie"
                 await init_beanie(
