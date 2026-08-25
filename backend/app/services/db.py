@@ -31,14 +31,16 @@ def decrypt_key(enc_key: str) -> str:
     except Exception:
         return ""
 
-# Configure MongoDB connection from environment URL
-MONGODB_URL = os.getenv("MONGODB_URL", os.getenv("MONGODB_URI", os.getenv("NONGODB_URL", os.getenv("DATABASE_URL", ""))))
+# Configure MongoDB connection dynamically from environment URL
+def get_mongodb_url() -> str:
+    return os.getenv("MONGODB_URL", os.getenv("MONGODB_URI", os.getenv("NONGODB_URL", os.getenv("DATABASE_URL", "")))).strip()
 
-# Parse database name from the URL or fall back to "podule"
-db_name = "podule"
-parsed = urlparse(MONGODB_URL)
-if parsed.path and parsed.path != "/":
-    db_name = parsed.path.lstrip("/")
+def get_db_name() -> str:
+    url = get_mongodb_url()
+    parsed = urlparse(url)
+    if parsed.path and parsed.path != "/":
+        return parsed.path.lstrip("/")
+    return "podule"
 
 # Define persistent Beanie Documents for internal tables
 class Approval(Document):
@@ -260,12 +262,13 @@ class BeanieDatabaseService:
 
     @property
     def is_configured(self) -> bool:
-        if not MONGODB_URL:
+        url = get_mongodb_url()
+        if not url:
             return False
         # On Vercel cloud serverless, localhost / 127.0.0.1 MongoDB URLs are unreachable and must be disabled
-        if os.getenv("VERCEL") and ("localhost" in MONGODB_URL or "127.0.0.1" in MONGODB_URL):
+        if os.getenv("VERCEL") and ("localhost" in url or "127.0.0.1" in url):
             return False
-        return bool(MONGODB_URL.startswith("mongodb://") or MONGODB_URL.startswith("mongodb+srv://"))
+        return bool(url.startswith("mongodb://") or url.startswith("mongodb+srv://"))
 
     @property
     def is_db_ready(self) -> bool:
@@ -275,7 +278,7 @@ class BeanieDatabaseService:
         if self.is_configured and (self.client is None or not getattr(self, "_beanie_initialized", False)):
             try:
                 import asyncio
-                await asyncio.wait_for(self.init_db(), timeout=2.0)
+                await asyncio.wait_for(self.init_db(), timeout=10.0)
             except Exception as e:
                 print(f"[DB ERROR] Lazy init_db failure or timeout: {e}")
 
@@ -284,20 +287,22 @@ class BeanieDatabaseService:
             print("[CRITICAL DB WARNING] MONGODB_URI/MONGODB_URL is not set or points to unreachable localhost on Vercel! Operating in fallback mode.")
             return
 
-        parsed_url = urlparse(MONGODB_URL)
+        url = get_mongodb_url()
+        target_db = get_db_name()
+        parsed_url = urlparse(url)
         hostname = parsed_url.hostname or "unknown-host"
-        print(f"[MONGODB ATTEMPTING CONNECT] Host: {hostname} | Database: {db_name}")
+        print(f"[MONGODB ATTEMPTING CONNECT] Host: {hostname} | Database: {target_db}")
         
         if not getattr(self, "_beanie_initialized", False):
             try:
                 if self.client is None:
                     self.client = AsyncIOMotorClient(
-                        MONGODB_URL,
-                        serverSelectionTimeoutMS=2000,
-                        connectTimeoutMS=2000
+                        url,
+                        serverSelectionTimeoutMS=10000,
+                        connectTimeoutMS=10000
                     )
                 await init_beanie(
-                    database=self.client[db_name],
+                    database=self.client[target_db],
                     document_models=[
                         User,
                         Episode,
@@ -309,9 +314,9 @@ class BeanieDatabaseService:
                     ]
                 )
                 self._beanie_initialized = True
-                print(f"[MONGODB CONNECTED SUCCESS] Successfully initialized Beanie models for DB '{db_name}' on Host '{hostname}'")
+                print(f"[MONGODB CONNECTED SUCCESS] Successfully initialized Beanie models for DB '{target_db}' on Host '{hostname}'")
             except Exception as e:
-                print(f"[MONGODB ERROR] init_beanie failed for DB '{db_name}' on Host '{hostname}': {e}")
+                print(f"[MONGODB ERROR] init_beanie failed for DB '{target_db}' on Host '{hostname}': {e}")
                 self.client = None
                 self._beanie_initialized = False
                 return

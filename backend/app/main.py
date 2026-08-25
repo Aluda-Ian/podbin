@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
     if db.is_configured:
         try:
             import asyncio
-            await asyncio.wait_for(db.init_db(), timeout=2.0)
+            await asyncio.wait_for(db.init_db(), timeout=10.0)
         except Exception as e:
             print(f"Warning: Database initialization failed on startup: {e}")
     else:
