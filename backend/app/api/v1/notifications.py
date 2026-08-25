@@ -5,6 +5,7 @@ from app.core.security import verify_token
 
 router = APIRouter()
 
+@router.get("")
 @router.get("/")
 async def get_notifications(authorization: Optional[str] = Header(None)):
     user_id = await verify_token(authorization)

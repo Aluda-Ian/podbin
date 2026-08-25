@@ -21,6 +21,7 @@ class EDLItem(BaseModel):
 
 backend_root = Path(__file__).resolve().parents[4]
 
+@router.get("")
 @router.get("/")
 async def get_approvals():
     return await db.get_approvals()

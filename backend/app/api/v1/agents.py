@@ -4,6 +4,7 @@ from app.services.db import db
 
 router = APIRouter()
 
+@router.get("")
 @router.get("/")
 async def get_agents():
     return await db.get_agents()

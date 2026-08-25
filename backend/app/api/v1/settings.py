@@ -69,17 +69,20 @@ class TestProviderPayload(BaseModel):
     provider: str
     api_key: str
 
+@router.get("")
 @router.get("/")
 async def get_settings(authorization: Optional[str] = Header(None)):
     user_id = await verify_token(authorization)
     return await db.get_settings()
 
+@router.put("")
 @router.put("/")
 async def update_settings(payload: SettingsUpdate, authorization: Optional[str] = Header(None)):
     user_id = await verify_token(authorization)
     upd = {k: v for k, v in payload.dict().items() if v is not None}
     return await db.update_settings(upd)
 
+@router.post("")
 @router.post("/")
 async def update_settings_post(payload: SettingsUpdate, authorization: Optional[str] = Header(None)):
     return await update_settings(payload, authorization)
