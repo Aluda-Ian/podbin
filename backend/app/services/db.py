@@ -316,8 +316,7 @@ class BeanieDatabaseService:
                         SettingsDocument,
                         APIKeysDocument,
                         Notification
-                    ],
-                    skip_indexes=True
+                    ]
                 )
                 self._beanie_initialized = True
                 self._last_error = None
