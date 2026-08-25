@@ -267,6 +267,10 @@ class BeanieDatabaseService:
             return False
         return bool(MONGODB_URL.startswith("mongodb://") or MONGODB_URL.startswith("mongodb+srv://"))
 
+    @property
+    def is_db_ready(self) -> bool:
+        return bool(self.is_configured and self.client is not None and getattr(self, "_beanie_initialized", False))
+
     async def ensure_db_initialized(self):
         if self.is_configured and (self.client is None or not getattr(self, "_beanie_initialized", False)):
             try:
@@ -355,7 +359,7 @@ class BeanieDatabaseService:
     # Episodes operations
     async def get_episodes(self) -> List[Dict[str, Any]]:
         await self.ensure_db_initialized()
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 episodes = await Episode.find_all().to_list()
                 mongo_episodes = []
@@ -390,7 +394,7 @@ class BeanieDatabaseService:
             self._in_memory_episodes.append(episode)
         self._save_episodes_to_file()
         
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 db_ep = Episode(**episode)
                 await db_ep.insert()
@@ -407,7 +411,7 @@ class BeanieDatabaseService:
                 break
         self._save_episodes_to_file()
 
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 ep = await Episode.get(episode_id)
                 if ep:
@@ -427,7 +431,7 @@ class BeanieDatabaseService:
         self._in_memory_episodes = [ep for ep in self._in_memory_episodes if ep.get("id") != episode_id]
         self._save_episodes_to_file()
 
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 ep = await Episode.get(episode_id)
                 if ep:
@@ -440,7 +444,7 @@ class BeanieDatabaseService:
     async def get_approvals(self) -> List[Dict[str, Any]]:
         await self.ensure_db_initialized()
         mongo_approvals = []
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 approvals = await Approval.find(Approval.status == "PENDING").to_list()
                 mongo_approvals = [{"id": appr.id, **appr.model_dump()} for appr in approvals]
@@ -456,7 +460,7 @@ class BeanieDatabaseService:
 
     async def action_approval(self, approval_id: str, action: str, updated_content: str = None) -> Optional[Dict[str, Any]]:
         await self.ensure_db_initialized()
-        if not self.is_configured or self.client is None:
+        if not self.is_db_ready:
             for a in self._in_memory_approvals:
                 if a.get("id") == approval_id:
                     if action == "approve":
@@ -485,7 +489,7 @@ class BeanieDatabaseService:
     async def add_approval(self, appr_dict: Dict[str, Any]) -> Dict[str, Any]:
         await self.ensure_db_initialized()
         self._in_memory_approvals.append(appr_dict)
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 db_appr = Approval(
                     id=appr_dict["id"],
@@ -505,7 +509,7 @@ class BeanieDatabaseService:
 
     # Agents operations
     async def get_agents(self) -> List[Dict[str, Any]]:
-        if not self.is_configured or self.client is None:
+        if not self.is_db_ready:
             return self._in_memory_agents
         try:
             agents = await Agent.find_all().to_list()
@@ -545,7 +549,7 @@ class BeanieDatabaseService:
         }
         res = dict(self._in_memory_settings)
         res["smtp"] = smtp_data
-        if not self.is_configured or self.client is None:
+        if not self.is_db_ready:
             return res
         try:
             s = await SettingsDocument.get("1")
@@ -561,7 +565,7 @@ class BeanieDatabaseService:
         await self.ensure_db_initialized()
         self._in_memory_settings.update(updates)
         self._save_settings_to_file()
-        if not self.is_configured or self.client is None:
+        if not self.is_db_ready:
             return self._in_memory_settings
         try:
             s = await SettingsDocument.get("1")
@@ -583,7 +587,7 @@ class BeanieDatabaseService:
     # Users operations
     async def get_users(self) -> List[Dict[str, Any]]:
         await self.ensure_db_initialized()
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 users = await User.find_all().to_list()
                 mongo_users = [{"id": u.id, **u.model_dump()} for u in users]
@@ -622,7 +626,7 @@ class BeanieDatabaseService:
             "is_verified": True
         }
 
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 new_user = User(
                     id=new_id,
@@ -655,7 +659,7 @@ class BeanieDatabaseService:
                 break
         self._save_users_to_file()
 
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 user = await User.get(user_id)
                 if not user:
@@ -686,7 +690,7 @@ class BeanieDatabaseService:
             deleted = True
 
         # Remove from MongoDB if configured
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 user = await User.get(user_id)
                 if not user:
@@ -723,7 +727,7 @@ class BeanieDatabaseService:
             return not ("..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-...")))
 
         # Query MongoDB document if database is configured
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 doc = await APIKeysDocument.get("1")
                 if doc:
@@ -796,7 +800,7 @@ class BeanieDatabaseService:
         self._save_api_keys_to_file()
 
         # Persist to MongoDB if configured
-        if self.is_configured and self.client is not None:
+        if self.is_db_ready:
             try:
                 doc = await APIKeysDocument.get("1")
                 if not doc:
