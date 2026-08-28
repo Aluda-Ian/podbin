@@ -275,15 +275,26 @@
     }
   }
 
+  function handleAdminAnalyticsRedirect() {
+    if (window.location.pathname === '/admin/analytics') {
+      window.location.replace('/analytics');
+    }
+  }
+
   // Observe DOM changes safely for client-side routing
   const observer = new MutationObserver(() => {
+    handleAdminAnalyticsRedirect();
     injectGoogleCards();
   });
 
   document.addEventListener('DOMContentLoaded', () => {
+    handleAdminAnalyticsRedirect();
     observer.observe(document.body, { childList: true, subtree: true });
     injectGoogleCards();
   });
 
-  setInterval(injectGoogleCards, 800);
+  setInterval(() => {
+    handleAdminAnalyticsRedirect();
+    injectGoogleCards();
+  }, 800);
 })();
