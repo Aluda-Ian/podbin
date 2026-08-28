@@ -310,19 +310,14 @@ class BeanieDatabaseService:
         if not getattr(self, "_beanie_initialized", False):
             try:
                 if self.client is None:
-                    import certifi
+                    import ssl
                     client_kwargs = {
                         "serverSelectionTimeoutMS": 3000,
                         "connectTimeoutMS": 3000,
                         "tls": True,
-                        "tlsAllowInvalidCertificates": True
+                        "tlsAllowInvalidCertificates": True,
+                        "ssl_cert_reqs": ssl.CERT_NONE
                     }
-                    try:
-                        ca_path = certifi.where()
-                        if ca_path and os.path.exists(ca_path):
-                            client_kwargs["tlsCAFile"] = ca_path
-                    except Exception:
-                        pass
                     self.client = AsyncIOMotorClient(url, **client_kwargs)
 
                 self._init_step = "calling_init_beanie"
