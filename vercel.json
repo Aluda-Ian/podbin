@@ -9,6 +9,18 @@
       "destination": "/api/index.py"
     },
     {
+      "source": "/docs",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/redoc",
+      "destination": "/api/index.py"
+    },
+    {
+      "source": "/openapi.json",
+      "destination": "/api/index.py"
+    },
+    {
       "source": "/static/(.*)",
       "destination": "/api/index.py"
     },
@@ -17,7 +29,7 @@
       "destination": "/api/index.py"
     },
     {
-      "source": "/((?!api/|health|static/|logos/|assets/|favicon.ico).*)",
+      "source": "/((?!api/|health|docs|redoc|openapi.json|static/|logos/|assets/|favicon.ico).*)",
       "destination": "/index.html"
     }
   ]
