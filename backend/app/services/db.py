@@ -257,14 +257,24 @@ class BeanieDatabaseService:
         return bool(self.is_configured and getattr(self, "_beanie_initialized", False))
 
     async def ensure_db_initialized(self):
-        if self.is_configured and not getattr(self, "_beanie_initialized", False):
-            try:
-                await self.init_db()
-            except Exception as e:
-                self._last_error = f"ensure_db_initialized error: {type(e).__name__} - {str(e)}"
-                print(f"[DB ERROR] Lazy init_db failure: {e}")
+        if not self.is_configured:
+            return
+        if getattr(self, "_beanie_initialized", False):
+            return
+        import time
+        last_failed = getattr(self, "_last_failed_time", 0)
+        # Cooldown: if DB initialization failed in the last 60 seconds, skip attempting to re-init to prevent blocking HTTP requests
+        if time.time() - last_failed < 60:
+            return
+        try:
+            await self.init_db()
+        except Exception as e:
+            self._last_failed_time = time.time()
+            self._last_error = f"ensure_db_initialized error: {type(e).__name__} - {str(e)}"
+            print(f"[DB ERROR] Lazy init_db failure: {e}")
 
     async def init_db(self):
+        import time
         self._init_step = "Starting init_db"
         if not self.is_configured:
             self._init_step = "not_configured"
@@ -282,12 +292,20 @@ class BeanieDatabaseService:
             try:
                 if self.client is None:
                     import certifi
-                    self.client = AsyncIOMotorClient(
-                        url,
-                        serverSelectionTimeoutMS=10000,
-                        connectTimeoutMS=10000,
-                        tlsCAFile=certifi.where()
-                    )
+                    client_kwargs = {
+                        "serverSelectionTimeoutMS": 3000,
+                        "connectTimeoutMS": 3000,
+                        "tls": True,
+                        "tlsAllowInvalidCertificates": True
+                    }
+                    try:
+                        ca_path = certifi.where()
+                        if ca_path and os.path.exists(ca_path):
+                            client_kwargs["tlsCAFile"] = ca_path
+                    except Exception:
+                        pass
+                    self.client = AsyncIOMotorClient(url, **client_kwargs)
+
                 self._init_step = "calling_init_beanie"
                 await init_beanie(
                     database=self.client.get_database(target_db),
@@ -303,10 +321,12 @@ class BeanieDatabaseService:
                 )
                 self._beanie_initialized = True
                 self._last_error = None
+                self._last_failed_time = 0
                 self._init_step = "beanie_initialized_success"
                 print(f"[MONGODB CONNECTED SUCCESS] Successfully initialized Beanie models for DB '{target_db}' on Host '{hostname}'")
             except Exception as e:
                 self._last_error = f"{type(e).__name__}: {str(e)}"
+                self._last_failed_time = time.time()
                 self._init_step = f"init_beanie_failed_{type(e).__name__}"
                 print(f"[MONGODB ERROR] init_beanie failed for DB '{target_db}' on Host '{hostname}': {e}")
                 self.client = None
@@ -315,14 +335,6 @@ class BeanieDatabaseService:
         
         # Seed default admin users ONLY if the MongoDB User collection is completely empty
         try:
-            # Remove legacy demo users from MongoDB Atlas if present
-            demo_emails = ["admin@podbin.com", "owner@podbin.com", "creator@podbin.com"]
-            for demo_email in demo_emails:
-                demo_u = await User.find_one(User.email == demo_email)
-                if demo_u:
-                    await demo_u.delete()
-                    print(f"[DB CLEANUP] Deleted legacy demo user {demo_email} from MongoDB Atlas.")
-
             user_count = await User.count()
             if user_count == 0:
                 print("[DB] User collection is empty. Seeding initial Super Admin into MongoDB...")
