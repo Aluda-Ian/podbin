@@ -33,13 +33,19 @@ def decrypt_key(enc_key: str) -> str:
 
 # Configure MongoDB connection dynamically from environment URL
 def get_mongodb_url() -> str:
-    return os.getenv("MONGODB_URL", os.getenv("MONGODB_URI", os.getenv("NONGODB_URL", os.getenv("DATABASE_URL", "")))).strip()
+    raw = os.getenv("MONGODB_URL", os.getenv("MONGODB_URI", os.getenv("NONGODB_URL", os.getenv("DATABASE_URL", "")))).strip()
+    if not raw:
+        return ""
+    if "mongodb+srv://" in raw and "tlsAllowInvalidCertificates" not in raw and "ssl=" not in raw and "tls=" not in raw:
+        sep = "&" if "?" in raw else "?"
+        raw = f"{raw}{sep}tls=true&tlsAllowInvalidCertificates=true&retryWrites=true"
+    return raw
 
 def get_db_name() -> str:
     url = get_mongodb_url()
     parsed = urlparse(url)
     if parsed.path and parsed.path != "/":
-        return parsed.path.lstrip("/")
+        return parsed.path.lstrip("/").split("?")[0]
     return "podule"
 
 # Define persistent Beanie Documents for internal tables
@@ -261,17 +267,30 @@ class BeanieDatabaseService:
             return
         if getattr(self, "_beanie_initialized", False):
             return
+        if getattr(self, "_init_in_progress", False):
+            return
         import time
         last_failed = getattr(self, "_last_failed_time", 0)
-        # Cooldown: if DB initialization failed in the last 60 seconds, skip attempting to re-init to prevent blocking HTTP requests
-        if time.time() - last_failed < 60:
+        # Cooldown: if DB initialization failed in the last 300 seconds (5 min), skip attempting re-init to prevent blocking HTTP requests
+        if time.time() - last_failed < 300:
             return
+        import asyncio
+        self._init_in_progress = True
+        try:
+            asyncio.create_task(self._safe_init_db())
+        except Exception:
+            self._init_in_progress = False
+
+    async def _safe_init_db(self):
+        import time
         try:
             await self.init_db()
         except Exception as e:
             self._last_failed_time = time.time()
-            self._last_error = f"ensure_db_initialized error: {type(e).__name__} - {str(e)}"
-            print(f"[DB ERROR] Lazy init_db failure: {e}")
+            self._last_error = f"safe_init_db error: {type(e).__name__} - {str(e)}"
+            print(f"[DB ERROR] Async init_db failure: {e}")
+        finally:
+            self._init_in_progress = False
 
     async def init_db(self):
         import time
