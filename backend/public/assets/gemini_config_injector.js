@@ -3,7 +3,6 @@
     try {
       const stored = localStorage.getItem('podule_auth_token') || localStorage.getItem('token') || localStorage.getItem('auth_token');
       if (stored) return stored.replace(/^"|"$/g, '');
-      // Search localStorage for any key containing token
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (k && k.toLowerCase().includes('token')) {
@@ -16,14 +15,14 @@
   }
 
   async function injectGeminiCard() {
-    if (!window.location.pathname.includes('/admin/api-config')) return;
+    if (!window.location.pathname.includes('/admin/api-config') && !window.location.pathname.includes('/settings')) return;
     if (document.getElementById('gemini-api-card')) return;
 
-    // Find the card grid container
-    const grid = document.querySelector('.grid');
+    // Find the card grid container safely
+    const grid = document.querySelector('form .grid') || document.querySelector('.grid') || document.querySelector('[class*="grid-cols"]');
     if (!grid) return;
 
-    // Adjust grid columns if needed
+    // Adjust grid columns if needed for 4 cards
     if (grid.classList.contains('lg:grid-cols-3')) {
       grid.classList.remove('lg:grid-cols-3');
       grid.classList.add('md:grid-cols-2', 'xl:grid-cols-4');
@@ -33,7 +32,7 @@
     const token = getAuthToken();
     let currentGeminiKey = '';
     if (token) {
-      try:
+      try {
         const resp = await fetch('/api/v1/admin/api-keys', {
           headers: { 'Authorization': `Bearer ${token}` }
         });
@@ -161,9 +160,7 @@
 
   // Observe DOM changes safely for client-side routing
   const observer = new MutationObserver(() => {
-    if (window.location.pathname.includes('/admin/api-config')) {
-      injectGeminiCard();
-    }
+    injectGeminiCard();
   });
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -172,5 +169,5 @@
   });
 
   // Polling fallback for SPA navigation
-  setInterval(injectGeminiCard, 1000);
+  setInterval(injectGeminiCard, 800);
 })();
