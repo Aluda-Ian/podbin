@@ -351,8 +351,13 @@ class BeanieDatabaseService:
                 self._beanie_initialized = False
                 return
         
-        # Seed default admin users ONLY if the MongoDB User collection is completely empty
+        # Purge demo users and ensure ONLY Super Admin info@vendatechnologies.com + real users exist in MongoDB Atlas
         try:
+            demo_users = await User.find(User.email.in_(["creator@podbin.com", "admin@podbin.com", "owner@podbin.com"])).to_list()
+            for du in demo_users:
+                await du.delete()
+                print(f"[DB PURGE] Removed demo user {du.email} from MongoDB Atlas.")
+
             user_count = await User.count()
             if user_count == 0:
                 print("[DB] User collection is empty. Seeding initial Super Admin into MongoDB...")
