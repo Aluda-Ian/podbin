@@ -571,14 +571,40 @@ class BeanieDatabaseService:
             return self._in_memory_agents
 
     async def toggle_agent(self, name: str) -> Optional[Dict[str, Any]]:
+        await self.ensure_db_initialized()
+        target_ag = None
         for ag in self._in_memory_agents:
             if ag["name"].lower() == name.lower():
                 current_status = ag.get("status", "idle")
                 new_status = "idle" if current_status == "active" else "active"
                 ag["status"] = new_status
                 ag["task"] = "Idle" if new_status == "idle" else "Resumed work on task"
-                return ag
-        return None
+                target_ag = ag
+                break
+
+        if self.is_db_ready and target_ag:
+            try:
+                db_agent = await Agent.get(target_ag["name"])
+                if not db_agent:
+                    db_agent = await Agent.find_one(Agent.id == target_ag["name"])
+                if db_agent:
+                    db_agent.status = target_ag["status"]
+                    db_agent.task = target_ag["task"]
+                    await db_agent.save()
+                else:
+                    db_agent = Agent(
+                        id=target_ag["name"],
+                        role=target_ag.get("role", "AI Agent"),
+                        status=target_ag["status"],
+                        task=target_ag["task"],
+                        tasksToday=target_ag.get("tasksToday", 0),
+                        success=target_ag.get("success", "99%")
+                    )
+                    await db_agent.insert()
+            except Exception as e:
+                print(f"[DB ERROR] MongoDB toggle_agent error: {e}")
+
+        return target_ag
 
     # Settings operations
     async def get_settings(self) -> Dict[str, Any]:
@@ -933,20 +959,57 @@ class BeanieDatabaseService:
         }
 
     # Notifications operations
-    async def get_notifications(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    async def get_notifications(self, user_id: str = "user-1", limit: int = 50) -> List[Dict[str, Any]]:
+        await self.ensure_db_initialized()
+        if self.is_db_ready:
+            try:
+                notifs = await Notification.find_all().sort("-created_at").limit(limit).to_list()
+                if notifs:
+                    return [n.model_dump() for n in notifs]
+            except Exception as e:
+                print(f"[DB ERROR] MongoDB get_notifications: {e}")
         return self._in_memory_notifs[:limit]
 
     async def create_notification(self, notif: Dict[str, Any]) -> Dict[str, Any]:
-        notif["id"] = f"notif-{len(self._in_memory_notifs) + 1}"
+        await self.ensure_db_initialized()
+        if not notif.get("id"):
+            notif["id"] = f"notif-{len(self._in_memory_notifs) + 1}"
         self._in_memory_notifs.insert(0, notif)
+        
+        if self.is_db_ready:
+            try:
+                db_notif = Notification(
+                    id=notif["id"],
+                    user_id=notif.get("user_id", "user-1"),
+                    title=notif.get("title", "System Notification"),
+                    message=notif.get("message", ""),
+                    type=notif.get("type", "info"),
+                    read=notif.get("read", False)
+                )
+                await db_notif.insert()
+            except Exception as e:
+                print(f"[DB ERROR] MongoDB create_notification: {e}")
         return notif
 
     async def mark_notification_read(self, notif_id: str) -> Optional[Dict[str, Any]]:
+        await self.ensure_db_initialized()
+        target_n = None
         for n in self._in_memory_notifs:
             if n.get("id") == notif_id:
                 n["read"] = True
-                return n
-        return None
+                target_n = n
+                break
+
+        if self.is_db_ready:
+            try:
+                db_n = await Notification.get(notif_id)
+                if db_n:
+                    db_n.read = True
+                    await db_n.save()
+            except Exception as e:
+                print(f"[DB ERROR] MongoDB mark_notification_read: {e}")
+
+        return target_n
 
     async def mark_all_notifications_read(self, user_id: str) -> int:
         count = 0
