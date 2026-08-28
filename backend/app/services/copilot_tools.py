@@ -223,6 +223,72 @@ async def tool_configure_llm_provider(provider: str, model_name: str, api_key: O
         "message": f"Switched LLM provider to {provider} ({model_name})."
     }
 
+async def tool_edit_description(episode_id: Optional[str] = None, new_description: str = "", instruction: Optional[str] = None) -> Dict[str, Any]:
+    """Edit or update an episode's show notes / description in the database based on user instruction."""
+    episodes = await db.get_episodes()
+    target_ep = None
+    if episode_id:
+        target_ep = next((ep for ep in episodes if ep["id"].lower() == episode_id.lower()), None)
+    if not target_ep and len(episodes) > 0:
+        target_ep = episodes[0]
+        
+    if not target_ep:
+        return {"error": f"Episode '{episode_id}' not found."}
+        
+    target_id = target_ep["id"]
+    await db.update_episode(target_id, {
+        "notes": new_description,
+        "note": f"Description updated via Gemini AI Copilot instruction."
+    })
+    
+    await db.notify_agent_completion(
+        agent_tag="AGENT_PROD",
+        message=f"Updated description for episode {target_id} using Gemini instruction.",
+        episode_id=target_id
+    )
+    
+    return {
+        "status": "success",
+        "action": "edit_description",
+        "episode_id": target_id,
+        "new_description": new_description,
+        "message": f"Successfully updated description for episode '{target_ep.get('title', target_id)}'."
+    }
+
+
+async def tool_edit_title(episode_id: Optional[str] = None, new_title: str = "", instruction: Optional[str] = None) -> Dict[str, Any]:
+    """Edit or update an episode's title in the database based on user instruction."""
+    episodes = await db.get_episodes()
+    target_ep = None
+    if episode_id:
+        target_ep = next((ep for ep in episodes if ep["id"].lower() == episode_id.lower()), None)
+    if not target_ep and len(episodes) > 0:
+        target_ep = episodes[0]
+        
+    if not target_ep:
+        return {"error": f"Episode '{episode_id}' not found."}
+        
+    target_id = target_ep["id"]
+    await db.update_episode(target_id, {
+        "title": new_title,
+        "note": f"Title updated to '{new_title}' via Gemini AI Copilot instruction."
+    })
+    
+    await db.notify_agent_completion(
+        agent_tag="AGENT_PROD",
+        message=f"Updated title for episode {target_id} to '{new_title}'.",
+        episode_id=target_id
+    )
+    
+    return {
+        "status": "success",
+        "action": "edit_title",
+        "episode_id": target_id,
+        "new_title": new_title,
+        "message": f"Successfully updated episode title to '{new_title}'."
+    }
+
+
 TOOL_REGISTRY = {
     "cut_video": tool_cut_video,
     "schedule_video": tool_schedule_video,
@@ -230,4 +296,6 @@ TOOL_REGISTRY = {
     "generate_clips": tool_generate_clips,
     "list_episodes": tool_list_episodes,
     "configure_llm_provider": tool_configure_llm_provider,
+    "edit_description": tool_edit_description,
+    "edit_title": tool_edit_title,
 }

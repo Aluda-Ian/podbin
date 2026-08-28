@@ -53,25 +53,29 @@ SUPPORTED_PROVIDERS = [
     }
 ]
 
-SYSTEM_PROMPT = """You are PodBin Copilot, an AI utility assistant for podcasters.
-You execute user instructions to manage podcasts, cut/trim media, generate clips, add captions, schedule distribution, and configure settings.
+SYSTEM_PROMPT = """You are PodBin Copilot, powered by Google Gemini AI.
+You execute user instructions to manage podcasts, edit descriptions, update titles, cut/trim media, generate clips, add captions, schedule distribution, and configure settings.
 
 AVAILABLE TOOLS & INTENTS:
-1. cut_video(episode_id, start_time, end_time, reason)
+1. edit_description(episode_id, new_description, instruction)
+   e.g., "edit description to include key takeaways and guest links", "update show notes"
+2. edit_title(episode_id, new_title, instruction)
+   e.g., "edit the title to 'The Future of AI'", "make title more punchy"
+3. cut_video(episode_id, start_time, end_time, reason)
    e.g., "cut video from 01:20 to 02:45 on EP-1"
-2. schedule_video(episode_id, platforms, scheduled_at, caption)
+4. schedule_video(episode_id, platforms, scheduled_at, caption)
    e.g., "schedule episode EP-1 for TikTok and YouTube tomorrow at 5pm"
-3. add_captions(episode_id, burn_in_captions, caption_style)
+5. add_captions(episode_id, burn_in_captions, caption_style)
    e.g., "add animated captions to episode EP-1"
-4. generate_clips(episode_id, count, platform)
+6. generate_clips(episode_id, count, platform)
    e.g., "generate 3 vertical clips for TikTok from EP-1"
-5. list_episodes(status_filter)
+7. list_episodes(status_filter)
    e.g., "list all episodes"
-6. configure_llm_provider(provider, model_name, api_key)
-   e.g., "switch provider to Ollama llama3"
+8. configure_llm_provider(provider, model_name, api_key)
+   e.g., "switch provider to Gemini gemini-1.5-flash"
 
 TOOL EXECUTION FORMAT:
-If the user prompt requires a tool action, include a JSON block in your response formatted as:
+If the user prompt requires a tool action or content edit, include a JSON block in your response formatted as:
 ```json
 {
   "tool": "<tool_name>",
@@ -100,6 +104,42 @@ def extract_tool_call_fallback(user_prompt: str, assistant_response: str) -> Opt
     # 2. Rule-based regex fallback parser for direct utility commands
     prompt_lower = user_prompt.lower()
     
+    # Check edit description intent: "edit description to ..."
+    if any(w in prompt_lower for w in ["edit description", "update description", "change description", "rewrite description", "edit show notes", "update show notes"]):
+        ep_match = re.search(r'(ep-\d+|episodes?-\d+)', prompt_lower)
+        ep_id = ep_match.group(1).upper() if ep_match else None
+        new_desc = user_prompt
+        for kw in ["edit description to", "update description to", "change description to", "rewrite description to", "show notes to"]:
+            if kw in prompt_lower:
+                new_desc = user_prompt.split(kw, 1)[-1].strip()
+                break
+        return {
+            "tool": "edit_description",
+            "arguments": {
+                "episode_id": ep_id,
+                "new_description": new_desc,
+                "instruction": user_prompt
+            }
+        }
+
+    # Check edit title intent: "edit title to ..."
+    if any(w in prompt_lower for w in ["edit title", "update title", "change title", "rename title", "make title"]):
+        ep_match = re.search(r'(ep-\d+|episodes?-\d+)', prompt_lower)
+        ep_id = ep_match.group(1).upper() if ep_match else None
+        new_title = user_prompt
+        for kw in ["edit title to", "update title to", "change title to", "rename title to", "title to"]:
+            if kw in prompt_lower:
+                new_title = user_prompt.split(kw, 1)[-1].strip().strip('"').strip("'")
+                break
+        return {
+            "tool": "edit_title",
+            "arguments": {
+                "episode_id": ep_id,
+                "new_title": new_title,
+                "instruction": user_prompt
+            }
+        }
+
     # Check cut video intent: "cut video from 01:20 to 02:45"
     cut_match = re.search(r'cut\s+(?:video\s+)?(?:from\s+)?(\d{1,2}:\d{2})\s+to\s+(\d{1,2}:\d{2})', prompt_lower)
     if cut_match:
@@ -175,27 +215,33 @@ def extract_tool_call_fallback(user_prompt: str, assistant_response: str) -> Opt
 
 async def run_copilot_chat(
     prompt: str,
-    provider: str = "openai",
+    provider: str = "gemini",
     model: Optional[str] = None,
     api_key: Optional[str] = None,
     context: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
-    """Execute Copilot chat prompt using selected LLM provider and utility tools."""
+    """Execute Copilot chat prompt using Google Gemini or selected LLM provider and utility tools."""
     
-    # 1. Resolve Provider Settings
+    # Check if Gemini key is available in environment or database
+    db_keys = await db.get_api_keys()
+    gemini_key = db_keys.get("gemini") or os.getenv("GEMINI_API_KEY", "")
+
+    # Default to gemini if gemini_key is available
+    if gemini_key and (provider == "openai" or not provider):
+        provider = "gemini"
+
     p_id = provider.lower().strip()
     provider_info = next((p for p in SUPPORTED_PROVIDERS if p["id"] == p_id), SUPPORTED_PROVIDERS[0])
     target_model = model or provider_info["default_model"]
     base_url = provider_info["base_url"]
     
     if not api_key:
-        db_keys = await db.get_api_keys()
         if p_id in ("openai", "open_ai"):
             api_key = db_keys.get("openai") or os.getenv("OPENAI_API_KEY", "")
         elif p_id in ("anthropic", "claude"):
             api_key = db_keys.get("anthropic") or os.getenv("ANTHROPIC_API_KEY", "")
         elif p_id in ("gemini", "google"):
-            api_key = db_keys.get("gemini") or os.getenv("GEMINI_API_KEY", "")
+            api_key = gemini_key
         elif p_id == "deepseek":
             api_key = db_keys.get("deepseek") or os.getenv("DEEPSEEK_API_KEY", "")
         else:
@@ -203,7 +249,6 @@ async def run_copilot_chat(
     
     env_api_key = api_key
     
-    # Build System + User Messages
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"Context: {json.dumps(context or {})}\n\nInstruction: {prompt}"}
@@ -213,8 +258,26 @@ async def run_copilot_chat(
     tool_result = None
     
     try:
-        if p_id == "ollama":
-            # Direct HTTP call to local Ollama server
+        if p_id in ("gemini", "google") and env_api_key:
+            # Execute Gemini 1.5 Flash REST API call
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={env_api_key}"
+            user_msg = f"{SYSTEM_PROMPT}\n\nContext: {json.dumps(context or {})}\n\nInstruction: {prompt}"
+            payload = {
+                "contents": [{"parts": [{"text": user_msg}]}],
+                "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1000}
+            }
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+                if resp.status_code == 200:
+                    g_data = resp.json()
+                    try:
+                        assistant_text = g_data["candidates"][0]["content"]["parts"][0]["text"]
+                    except Exception:
+                        assistant_text = f"Gemini processed instruction: '{prompt}'."
+                else:
+                    print(f"[GEMINI COPILOT ERROR] {resp.status_code}: {resp.text}")
+                    assistant_text = f"Received instruction: '{prompt}'. Executing editing utility..."
+        elif p_id == "ollama":
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     "http://localhost:11434/api/generate",
@@ -224,7 +287,7 @@ async def run_copilot_chat(
                 if resp.status_code == 200:
                     assistant_text = resp.json().get("response", "")
                 else:
-                    assistant_text = f"Ollama local service returned status {resp.status_code}. Processing instruction locally..."
+                    assistant_text = f"Ollama service returned status {resp.status_code}. Processing instruction locally..."
         else:
             client = AsyncOpenAI(
                 api_key=env_api_key or "sk-dummy-key-for-sandbox",
@@ -238,9 +301,10 @@ async def run_copilot_chat(
             )
             assistant_text = res.choices[0].message.content or ""
     except Exception as e:
+        print(f"[COPILOT CHAT ERROR] {e}")
         assistant_text = f"Received instruction: '{prompt}'. Executing utility request..."
 
-    # Extract tool execution
+    # Extract and execute tool invocation
     tool_call = extract_tool_call_fallback(prompt, assistant_text)
     
     if tool_call and tool_call.get("tool") in TOOL_REGISTRY:
