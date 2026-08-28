@@ -278,3 +278,107 @@ async def get_me(authorization: Optional[str] = Header(None)):
         status_code=status.HTTP_404_NOT_FOUND,
         detail="User not found"
     )
+
+
+class GoogleAuthRequest(BaseModel):
+    credential: Optional[str] = None
+    access_token: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+
+
+@router.get("/google/client-id")
+async def get_google_client_id():
+    return {
+        "client_id": os.getenv("GOOGLE_CLIENT_ID", "")
+    }
+
+
+@router.post("/google", response_model=TokenResponse)
+async def google_auth(payload: GoogleAuthRequest):
+    """
+    Authenticate user via Google OAuth (Sign in or Sign up).
+    Verifies Google ID Token or processes user info payload.
+    """
+    import httpx
+    import secrets
+
+    email = None
+    name = None
+
+    if payload.credential:
+        # Verify Google ID token via Google Tokeninfo API
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.credential}")
+                if resp.status_code == 200:
+                    info = resp.json()
+                    email = info.get("email")
+                    name = info.get("name") or info.get("given_name") or "Google User"
+        except Exception as e:
+            print(f"[AUTH] Google token verification error: {e}")
+    elif payload.access_token:
+        # Verify Google access token via Userinfo API
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(
+                    "https://www.googleapis.com/oauth2/v3/userinfo",
+                    headers={"Authorization": f"Bearer {payload.access_token}"}
+                )
+                if resp.status_code == 200:
+                    info = resp.json()
+                    email = info.get("email")
+                    name = info.get("name") or "Google User"
+        except Exception as e:
+            print(f"[AUTH] Google userinfo error: {e}")
+    elif payload.email:
+        email = payload.email
+        name = payload.name or "Google User"
+
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to verify Google credential or missing email"
+        )
+
+    clean_email = email.strip().lower()
+    users = await db.get_users()
+    existing_user = next((u for u in users if u.get("email", "").strip().lower() == clean_email), None)
+
+    if existing_user:
+        target_user = existing_user
+        if not target_user.get("is_verified"):
+            await db.update_user(target_user["id"], {"is_verified": True})
+            target_user["is_verified"] = True
+    else:
+        # Auto-create new user account from Google sign-up
+        hashed_pw = hash_password(secrets.token_urlsafe(16))
+        user_data = {
+            "id": f"user-google-{secrets.token_hex(6)}",
+            "name": name or "Google User",
+            "email": clean_email,
+            "role": "Podcast Owner",
+            "password": hashed_pw,
+            "podcast_ids": ["podcast-1"],
+            "suspended": False,
+            "is_verified": True,
+            "two_factor_enabled": False
+        }
+        target_user = await db.create_user(user_data)
+
+    access_token = create_access_token(user_id=target_user["id"])
+    return TokenResponse(
+        access_token=access_token,
+        user=UserResponse(
+            id=target_user["id"],
+            name=target_user["name"],
+            email=target_user["email"],
+            role=target_user["role"],
+            podcast_ids=target_user.get("podcast_ids", ["podcast-1"]),
+            provider_config=target_user.get("provider_config"),
+            monthly_token_usage=target_user.get("monthly_token_usage", 0),
+            token_limit=target_user.get("token_limit", 100000),
+            is_verified=True,
+            two_factor_enabled=target_user.get("two_factor_enabled", False)
+        )
+    )
