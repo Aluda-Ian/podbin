@@ -304,3 +304,141 @@ async def get_valid_social_token(connection_id: str) -> Optional[str]:
     except Exception as e:
         print(f"[DISTRIBUTION] Error in get_valid_social_token: {e}")
         return None
+
+
+# -----------------------------------------------------------------------------
+# Phase 4 & Phase 5 Endpoints: AI Pipeline, Post Approvals, and Content Calendar
+# -----------------------------------------------------------------------------
+
+class PostUpdatePayload(BaseModel):
+    content: Optional[str] = None
+    platform_captions: Optional[Dict[str, str]] = None
+    platforms: Optional[List[str]] = None
+    scheduled_time: Optional[datetime] = None
+
+
+@router.post("/repurpose/{episode_id}")
+async def trigger_ai_repurposing(episode_id: str, authorization: Optional[str] = Header(None)):
+    """Trigger the autonomous AI Repurposing Pipeline for an episode"""
+    user_id = await verify_token(authorization)
+    from app.services.repurposing_engine import repurposing_engine
+    res = await repurposing_engine.execute_repurposing_pipeline(episode_id, user_id=user_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error", "AI Repurposing failed"))
+    return res
+
+
+@router.get("/tasks/{episode_id}")
+async def get_ai_task_progress(episode_id: str, authorization: Optional[str] = Header(None)):
+    """Get status & progress of AI pipeline background tasks for an episode"""
+    user_id = await verify_token(authorization)
+    await db.ensure_db_initialized()
+    
+    if db.is_db_ready:
+        from app.models.ai_task import AITask
+        try:
+            tasks = await AITask.find(AITask.episode_id == episode_id).to_list()
+            return [
+                {
+                    "id": t.id,
+                    "task_type": t.task_type,
+                    "status": t.status,
+                    "progress": t.progress,
+                    "result_data": t.result_data,
+                    "error_message": t.error_message,
+                    "updated_at": t.updated_at.isoformat()
+                }
+                for t in tasks
+            ]
+        except Exception as e:
+            print(f"[DISTRIBUTION] Error fetching AI tasks: {e}")
+
+    return []
+
+
+@router.get("/posts")
+async def list_social_posts(
+    status: Optional[str] = Query(None),
+    authorization: Optional[str] = Header(None)
+):
+    """List social media scheduled posts for user"""
+    user_id = await verify_token(authorization)
+    await db.ensure_db_initialized()
+
+    if db.is_db_ready:
+        try:
+            query = SocialPost.find(SocialPost.user_id == user_id)
+            if status:
+                query = query.find(SocialPost.status == status)
+            posts = await query.sort("-scheduled_time").to_list()
+            return [p.model_dump() for p in posts]
+        except Exception as e:
+            print(f"[DISTRIBUTION] Error fetching SocialPost list: {e}")
+
+    return []
+
+
+@router.post("/posts/{post_id}/approve")
+async def approve_and_schedule_post(post_id: str, authorization: Optional[str] = Header(None)):
+    """Approve a PENDING_APPROVAL post and transition status to SCHEDULED"""
+    user_id = await verify_token(authorization)
+    await db.ensure_db_initialized()
+
+    if db.is_db_ready:
+        try:
+            post = await SocialPost.get(post_id)
+            if post and post.user_id == user_id:
+                post.status = "SCHEDULED"
+                post.updated_at = datetime.utcnow()
+                await post.save()
+                return {"message": "Post approved and transitioned to SCHEDULED", "post": post.model_dump()}
+        except Exception as e:
+            print(f"[DISTRIBUTION] Error approving post: {e}")
+
+    return {"message": "Post approved"}
+
+
+@router.put("/posts/{post_id}")
+async def update_social_post(post_id: str, payload: PostUpdatePayload, authorization: Optional[str] = Header(None)):
+    """Update SocialPost content and per-platform custom copy"""
+    user_id = await verify_token(authorization)
+    await db.ensure_db_initialized()
+
+    if db.is_db_ready:
+        try:
+            post = await SocialPost.get(post_id)
+            if post and post.user_id == user_id:
+                if payload.content is not None: post.content = payload.content
+                if payload.platform_captions is not None: post.platform_captions = payload.platform_captions
+                if payload.platforms is not None: post.platforms = payload.platforms
+                if payload.scheduled_time is not None: post.scheduled_time = payload.scheduled_time
+                post.updated_at = datetime.utcnow()
+                await post.save()
+                return post.model_dump()
+        except Exception as e:
+            print(f"[DISTRIBUTION] Error updating SocialPost: {e}")
+
+    return {"message": "Post updated"}
+
+
+@router.get("/calendar")
+async def get_content_calendar(authorization: Optional[str] = Header(None)):
+    """Get weekly/monthly scheduled posts grouped for the Content Calendar UI"""
+    user_id = await verify_token(authorization)
+    await db.ensure_db_initialized()
+
+    posts_data = []
+    if db.is_db_ready:
+        try:
+            posts = await SocialPost.find(SocialPost.user_id == user_id).to_list()
+            posts_data = [p.model_dump() for p in posts]
+        except Exception as e:
+            print(f"[DISTRIBUTION] Error fetching calendar posts: {e}")
+
+    return {
+        "calendar_posts": posts_data,
+        "total_scheduled": sum(1 for p in posts_data if p.get("status") == "SCHEDULED"),
+        "total_published": sum(1 for p in posts_data if p.get("status") == "PUBLISHED"),
+        "pending_approval": sum(1 for p in posts_data if p.get("status") == "PENDING_APPROVAL")
+    }
+
