@@ -192,6 +192,8 @@ app.include_router(copilot_router, prefix="/api/v1/copilot", tags=["copilot"])
 async def serve_spa(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API endpoint not found")
+    if full_path in ["docs", "redoc", "openapi.json", "docs/", "redoc/"]:
+        raise HTTPException(status_code=404, detail="Documentation path handled by FastAPI")
         
     # Check if asking for a static asset file
     if full_path.startswith("assets/") or full_path.startswith("logos/") or full_path.startswith("static/") or "." in Path(full_path).name:
