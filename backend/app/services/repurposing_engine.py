@@ -36,7 +36,7 @@ class AIRepurposingEngine:
         # -------------------------------------------------------------
         # 1. Transcription Agent
         # -------------------------------------------------------------
-        t_task = AITask(episode_id=episode_id, user_id=user_id, task_type="transcription", status="PROCESSING", progress=25)
+        t_task = AITask(id=f"task-trans-{datetime.utcnow().timestamp()}", episode_id=episode_id, user_id=user_id, task_type="transcription", status="PROCESSING", progress=25)
         if db.is_db_ready: await t_task.insert()
 
         transcript = ep.get("transcript", "")
@@ -51,7 +51,7 @@ class AIRepurposingEngine:
         # -------------------------------------------------------------
         # 2. Clip Extraction Agent (Gemini 1.5 Flash)
         # -------------------------------------------------------------
-        c_task = AITask(episode_id=episode_id, user_id=user_id, task_type="clipping", status="PROCESSING", progress=50)
+        c_task = AITask(id=f"task-clip-{datetime.utcnow().timestamp()}", episode_id=episode_id, user_id=user_id, task_type="clipping", status="PROCESSING", progress=50)
         if db.is_db_ready: await c_task.insert()
 
         # Use LLM helper to extract 3 viral hooks
@@ -87,7 +87,7 @@ class AIRepurposingEngine:
         # -------------------------------------------------------------
         # 3. Video Processing Agent (FFmpeg 9:16 vertical crop + captions)
         # -------------------------------------------------------------
-        v_task = AITask(episode_id=episode_id, user_id=user_id, task_type="video_processing", status="PROCESSING", progress=75)
+        v_task = AITask(id=f"task-vid-{datetime.utcnow().timestamp()}", episode_id=episode_id, user_id=user_id, task_type="video_processing", status="PROCESSING", progress=75)
         if db.is_db_ready: await v_task.insert()
         
         # Simulate / generate vertical clip media URLs
@@ -105,7 +105,7 @@ class AIRepurposingEngine:
         # -------------------------------------------------------------
         # 4. Copywriter Agent (Platform-specific copy)
         # -------------------------------------------------------------
-        w_task = AITask(episode_id=episode_id, user_id=user_id, task_type="copywriting", status="PROCESSING", progress=90)
+        w_task = AITask(id=f"task-copy-{datetime.utcnow().timestamp()}", episode_id=episode_id, user_id=user_id, task_type="copywriting", status="PROCESSING", progress=90)
         if db.is_db_ready: await w_task.insert()
 
         generated_posts = []
@@ -124,6 +124,7 @@ class AIRepurposingEngine:
             }
 
             social_post = SocialPost(
+                id=f"post-{datetime.utcnow().timestamp()}-{idx}",
                 episode_id=episode_id,
                 user_id=user_id,
                 platforms=["youtube", "linkedin", "twitter", "tiktok"],

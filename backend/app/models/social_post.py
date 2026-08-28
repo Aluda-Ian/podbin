@@ -4,7 +4,7 @@ from beanie import Document, Indexed
 from pydantic import Field
 
 class SocialPost(Document):
-    id: str = Field(default_factory=lambda: f"post-{datetime.utcnow().timestamp()}")
+    id: Optional[str] = Field(default=None)
     episode_id: Optional[str] = None
     user_id: Indexed(str) = "user-1"
     platforms: List[str] = Field(default_factory=list)  # ["youtube", "linkedin", "twitter", "tiktok"]

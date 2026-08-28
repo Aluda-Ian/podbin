@@ -4,7 +4,7 @@ from beanie import Document, Indexed
 from pydantic import Field
 
 class SocialConnection(Document):
-    id: str = Field(default_factory=lambda: f"soc-conn-{datetime.utcnow().timestamp()}")
+    id: Optional[str] = Field(default=None)
     user_id: Indexed(str) = "user-1"
     platform: Indexed(str)  # "youtube", "linkedin", "twitter", "tiktok", "instagram", "facebook"
     access_token: str  # Encrypted token string

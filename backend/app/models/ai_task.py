@@ -4,7 +4,7 @@ from beanie import Document, Indexed
 from pydantic import Field
 
 class AITask(Document):
-    id: str = Field(default_factory=lambda: f"aitask-{datetime.utcnow().timestamp()}")
+    id: Optional[str] = Field(default=None)
     episode_id: Indexed(str)
     user_id: Indexed(str) = "user-1"
     task_type: str  # "transcription", "clipping", "video_processing", "copywriting"
