@@ -10,6 +10,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from app.models.user import User
 from app.models.episode import Episode
 from app.models.notification import Notification
+from app.models.social_connection import SocialConnection
+from app.models.social_post import SocialPost
+from app.models.ai_task import AITask
 
 # Secure key encryption helper
 ENCRYPTION_SALT = os.getenv("ENCRYPTION_SALT", "podule_secure_salt")
@@ -334,7 +337,10 @@ class BeanieDatabaseService:
                         Agent,
                         SettingsDocument,
                         APIKeysDocument,
-                        Notification
+                        Notification,
+                        SocialConnection,
+                        SocialPost,
+                        AITask
                     ]
                 )
                 self._beanie_initialized = True
