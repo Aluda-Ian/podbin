@@ -102,6 +102,7 @@ class APIKeysDocument(Document):
     deepgram: Optional[str] = ""
     openai: Optional[str] = ""
     elevenlabs: Optional[str] = ""
+    gemini: Optional[str] = ""
 
     class Settings:
         name = "api_keys"
@@ -310,13 +311,11 @@ class BeanieDatabaseService:
         if not getattr(self, "_beanie_initialized", False):
             try:
                 if self.client is None:
-                    import ssl
                     client_kwargs = {
                         "serverSelectionTimeoutMS": 3000,
                         "connectTimeoutMS": 3000,
                         "tls": True,
-                        "tlsAllowInvalidCertificates": True,
-                        "ssl_cert_reqs": ssl.CERT_NONE
+                        "tlsAllowInvalidCertificates": True
                     }
                     self.client = AsyncIOMotorClient(url, **client_kwargs)
 
@@ -785,13 +784,14 @@ class BeanieDatabaseService:
         keys = {
             "openai": self._in_memory_api_keys.get("openai", ""),
             "deepgram": self._in_memory_api_keys.get("deepgram", ""),
-            "elevenlabs": self._in_memory_api_keys.get("elevenlabs", "")
+            "elevenlabs": self._in_memory_api_keys.get("elevenlabs", ""),
+            "gemini": self._in_memory_api_keys.get("gemini", "")
         }
 
         def is_real_key(val: Optional[str]) -> bool:
             if not val: return False
             val_str = str(val).strip()
-            return not ("..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-...")))
+            return not ("..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-...", "AIza...")))
 
         # Query MongoDB document if database is configured
         if self.is_db_ready:
@@ -807,6 +807,9 @@ class BeanieDatabaseService:
                     if doc.elevenlabs:
                         raw = decrypt_key(doc.elevenlabs[4:]) if doc.elevenlabs.startswith("enc:") else doc.elevenlabs
                         if is_real_key(raw): keys["elevenlabs"] = raw
+                    if getattr(doc, "gemini", None):
+                        raw = decrypt_key(doc.gemini[4:]) if doc.gemini.startswith("enc:") else doc.gemini
+                        if is_real_key(raw): keys["gemini"] = raw
             except Exception as e:
                 print(f"MongoDB API keys read warning: {e}")
 
@@ -829,6 +832,10 @@ class BeanieDatabaseService:
             env_val = env_file_data.get("ELEVENLABS_API_KEY") or os.getenv("ELEVENLABS_API_KEY", "")
             if is_real_key(env_val): keys["elevenlabs"] = env_val.strip()
 
+        if not is_real_key(keys.get("gemini")):
+            env_val = env_file_data.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "")
+            if is_real_key(env_val): keys["gemini"] = env_val.strip()
+
         # Update in-memory dict and process environment variables
         self._in_memory_api_keys.update(keys)
         self._save_api_keys_to_file()
@@ -850,7 +857,7 @@ class BeanieDatabaseService:
             return "..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-..."))
 
         resolved = {}
-        for k in ["openai", "deepgram", "elevenlabs"]:
+        for k in ["openai", "deepgram", "elevenlabs", "gemini"]:
             in_val = keys_dict.get(k)
             if in_val is not None and not is_masked_or_invalid(in_val):
                 clean_v = in_val.strip()
@@ -871,7 +878,7 @@ class BeanieDatabaseService:
             try:
                 doc = await APIKeysDocument.get("1")
                 if not doc:
-                    doc = APIKeysDocument(id="1", deepgram="", openai="", elevenlabs="")
+                    doc = APIKeysDocument(id="1", deepgram="", openai="", elevenlabs="", gemini="")
                     await doc.insert()
 
                 if resolved.get("openai"):
@@ -880,6 +887,8 @@ class BeanieDatabaseService:
                     doc.deepgram = f"enc:{encrypt_key(resolved['deepgram'])}"
                 if resolved.get("elevenlabs"):
                     doc.elevenlabs = f"enc:{encrypt_key(resolved['elevenlabs'])}"
+                if resolved.get("gemini"):
+                    doc.gemini = f"enc:{encrypt_key(resolved['gemini'])}"
 
                 await doc.save()
             except Exception as e:

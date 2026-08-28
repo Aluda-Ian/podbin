@@ -39,8 +39,64 @@ async def get_openai_api_key() -> str:
     return settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "")
 
 
+async def get_gemini_api_key() -> str:
+    import os
+    db_keys = await db.get_api_keys()
+    g_key = db_keys.get("gemini") or os.getenv("GEMINI_API_KEY", "")
+    return g_key.strip() if g_key else ""
+
+
+async def generate_gemini_metadata(transcript: str) -> Dict[str, Any]:
+    import httpx
+    gemini_key = await get_gemini_api_key()
+    if not gemini_key:
+        raise RuntimeError("No Gemini API Key configured. Please add GEMINI_API_KEY in Settings / API Connections.")
+
+    prompt = (
+        "You are a podcast metadata specialist. Given a transcript, generate:\n"
+        "1. 3-5 concise, engaging episode titles\n"
+        "2. Detailed show notes (2-3 paragraphs summarizing key topics)\n"
+        "3. 3 social promotion snippets for Twitter/Instagram\n\n"
+        "Return valid JSON object with keys:\n"
+        "- 'titles': array of title strings\n"
+        "- 'notes': show notes string\n"
+        "- 'social_snippets': array of snippet strings\n\n"
+        f"Transcript:\n{transcript}"
+    )
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "response_mime_type": "application/json",
+            "temperature": 0.7,
+            "maxOutputTokens": 1500
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini API returned error {resp.status_code}: {resp.text}")
+        data = resp.json()
+        try:
+            raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+            return json.loads(raw_text)
+        except (KeyError, IndexError, json.JSONDecodeError) as err:
+            print(f"[GEMINI METADATA PARSE ERROR] {err}")
+            return {"titles": ["Episode Overview"], "notes": transcript[:300] + "...", "social_snippets": []}
+
+
 async def generate_metadata(transcript: str) -> Dict[str, Any]:
+    # Check if Gemini key is available and configured
+    gemini_key = await get_gemini_api_key()
     provider = await get_provider_config()
+
+    if gemini_key or (provider.custom_provider and provider.custom_provider.lower() in ("gemini", "google")):
+        try:
+            return await generate_gemini_metadata(transcript)
+        except Exception as e:
+            print(f"[LLM NOTICE] Gemini metadata fallback to OpenAI: {e}")
 
     system_prompt = (
         "You are a podcast metadata specialist. Given a transcript, generate:\n"

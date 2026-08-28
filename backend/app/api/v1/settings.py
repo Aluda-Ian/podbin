@@ -45,6 +45,7 @@ class APIKeysPayload(BaseModel):
     deepgram: Optional[str] = ""
     openai: Optional[str] = ""
     elevenlabs: Optional[str] = ""
+    gemini: Optional[str] = ""
 
 class IntegrationCredentialItem(BaseModel):
     client_id: Optional[str] = ""
@@ -140,6 +141,7 @@ async def get_api_connections(authorization: Optional[str] = Header(None)):
     openai_key = db_keys.get("openai") or env_keys.get("OPENAI_API_KEY", "")
     deepgram_key = db_keys.get("deepgram") or env_keys.get("DEEPGRAM_API_KEY", "")
     elevenlabs_key = db_keys.get("elevenlabs") or env_keys.get("ELEVENLABS_API_KEY", "")
+    gemini_key = db_keys.get("gemini") or env_keys.get("GEMINI_API_KEY", "")
 
     # Load Integration Credentials
     db_creds = settings_data.get("integration_credentials") or {}
@@ -168,6 +170,7 @@ async def get_api_connections(authorization: Optional[str] = Header(None)):
             "openai": mask_key("sk-", openai_key),
             "deepgram": mask_key("dg-", deepgram_key),
             "elevenlabs": mask_key("el-", elevenlabs_key),
+            "gemini": mask_key("AIza...", gemini_key)
         },
         "integration_credentials": integration_creds
     }
@@ -187,11 +190,12 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
     current_openai = db_keys.get("openai") or env_keys.get("OPENAI_API_KEY", "")
     current_deepgram = db_keys.get("deepgram") or env_keys.get("DEEPGRAM_API_KEY", "")
     current_elevenlabs = db_keys.get("elevenlabs") or env_keys.get("ELEVENLABS_API_KEY", "")
+    current_gemini = db_keys.get("gemini") or env_keys.get("GEMINI_API_KEY", "")
 
     def is_masked_or_empty(val: Optional[str]) -> bool:
         if not val: return True
         val_str = str(val).strip()
-        return "..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-..."))
+        return "..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-...", "AIza..."))
 
     # Resolve OpenAI Key
     openai_in = payload.api_keys.openai
@@ -213,6 +217,13 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
         elevenlabs_resolved = current_elevenlabs
     else:
         elevenlabs_resolved = elevenlabs_in.strip()
+
+    # Resolve Gemini Key
+    gemini_in = payload.api_keys.gemini
+    if is_masked_or_empty(gemini_in):
+        gemini_resolved = current_gemini
+    else:
+        gemini_resolved = gemini_in.strip()
 
     # Deep Merge Integration Credentials
     db_creds = settings_data.get("integration_credentials") or {}
@@ -240,13 +251,15 @@ async def update_api_connections(payload: APIConnectionsPayload, authorization: 
     await db.update_api_keys({
         "openai": openai_resolved,
         "deepgram": deepgram_resolved,
-        "elevenlabs": elevenlabs_resolved
+        "elevenlabs": elevenlabs_resolved,
+        "gemini": gemini_resolved
     })
 
     env_updates = {
         "OPENAI_API_KEY": openai_resolved,
         "DEEPGRAM_API_KEY": deepgram_resolved,
         "ELEVENLABS_API_KEY": elevenlabs_resolved,
+        "GEMINI_API_KEY": gemini_resolved
     }
     for plat in platforms:
         plat_data = resolved_integration_creds.get(plat) or {}

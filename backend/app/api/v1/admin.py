@@ -20,9 +20,10 @@ class InviteUserPayload(BaseModel):
     podcast_ids: Optional[List[str]] = None
 
 class APIKeysPayload(BaseModel):
-    deepgram: str
-    openai: str
-    elevenlabs: str
+    deepgram: Optional[str] = ""
+    openai: Optional[str] = ""
+    elevenlabs: Optional[str] = ""
+    gemini: Optional[str] = ""
 
 @router.get("/users")
 async def get_users(authorization: Optional[str] = Header(None)):
@@ -144,7 +145,8 @@ async def get_api_keys(authorization: Optional[str] = Header(None)):
     return {
         "deepgram": mask_key("dg-", keys.get("deepgram")),
         "openai": mask_key("sk-", keys.get("openai")),
-        "elevenlabs": mask_key("el-", keys.get("elevenlabs"))
+        "elevenlabs": mask_key("el-", keys.get("elevenlabs")),
+        "gemini": mask_key("AIza...", keys.get("gemini"))
     }
 
 def is_masked_placeholder(val: Optional[str]) -> bool:
@@ -197,6 +199,18 @@ async def update_api_keys(payload: APIKeysPayload, authorization: Optional[str] 
         upd["elevenlabs"] = payload.elevenlabs.strip()
     elif current_keys.get("elevenlabs"):
         upd["elevenlabs"] = current_keys["elevenlabs"]
+
+    # Validate and update Gemini key if provided and not masked placeholder
+    if payload.gemini and not is_masked_placeholder(payload.gemini):
+        is_valid, error_msg = await validate_api_key_format("gemini", payload.gemini)
+        if not is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid Gemini API key: {error_msg}"
+            )
+        upd["gemini"] = payload.gemini.strip()
+    elif current_keys.get("gemini"):
+        upd["gemini"] = current_keys["gemini"]
     
     if upd:
         await db.update_api_keys(upd)
@@ -205,7 +219,8 @@ async def update_api_keys(payload: APIKeysPayload, authorization: Optional[str] 
     return {
         "deepgram": f"dg-...{saved_keys['deepgram'][-4:]}" if saved_keys.get("deepgram") else "",
         "openai": f"sk-...{saved_keys['openai'][-4:]}" if saved_keys.get("openai") else "",
-        "elevenlabs": f"el-...{saved_keys['elevenlabs'][-4:]}" if saved_keys.get("elevenlabs") else ""
+        "elevenlabs": f"el-...{saved_keys['elevenlabs'][-4:]}" if saved_keys.get("elevenlabs") else "",
+        "gemini": f"AIza...{saved_keys['gemini'][-4:]}" if saved_keys.get("gemini") else ""
     }
 
 
