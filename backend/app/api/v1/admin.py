@@ -17,6 +17,7 @@ class InviteUserPayload(BaseModel):
     name: str
     email: str
     role: str
+    podcast_ids: Optional[List[str]] = None
 
 class APIKeysPayload(BaseModel):
     deepgram: str
@@ -27,6 +28,19 @@ class APIKeysPayload(BaseModel):
 async def get_users(authorization: Optional[str] = Header(None)):
     admin_user = await verify_admin_token(authorization)
     return await db.get_users()
+
+@router.get("/team")
+@router.get("/team/members")
+async def get_team_members_endpoint(authorization: Optional[str] = Header(None)):
+    user_id = await verify_admin_token(authorization)
+    users = await db.get_users()
+    current_user = next((u for u in users if u["id"] == user_id), None)
+    if not current_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if current_user.get("role") in ["Super Admin", "Admin", "ADMIN"]:
+        return await db.get_users()
+    user_pods = current_user.get("podcast_ids", ["podcast-1"])
+    return await db.get_team_members(user_pods)
 
 @router.put("/users/{user_id}/role")
 async def update_user_role(user_id: str, payload: UserUpdateRolePayload, authorization: Optional[str] = Header(None)):
@@ -55,7 +69,18 @@ async def delete_user_endpoint(user_id: str, authorization: Optional[str] = Head
 @router.post("/users/invite")
 async def invite_user(payload: InviteUserPayload, authorization: Optional[str] = Header(None)):
     admin_user = await verify_admin_token(authorization)
-    u = await db.invite_user(payload.name, payload.email, payload.role)
+    users = await db.get_users()
+    inviter = next((u for u in users if u["id"] == admin_user), None)
+    
+    p_ids = payload.podcast_ids or []
+    if inviter and inviter.get("role") == "Podcast Owner":
+        owner_pods = inviter.get("podcast_ids", ["podcast-1"])
+        if owner_pods:
+            p_ids = owner_pods
+    if not p_ids:
+        p_ids = ["podcast-1"]
+
+    u = await db.invite_user(payload.name, payload.email, payload.role, podcast_ids=p_ids)
     user_id = u.get("id") or u.get("email")
     
     # Create password setup reset token
@@ -99,6 +124,7 @@ Podule Studio Team
         "name": payload.name,
         "email": payload.email,
         "role": payload.role,
+        "podcast_ids": p_ids,
         "invite_link": setup_link,
         "message": "Invitation sent successfully via email"
     }

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from app.agents.state import EpisodeStatus
 from beanie import Document
 
@@ -43,14 +43,14 @@ class EpisodeResponse(BaseModel):
     podcast_id: Optional[str] = "podcast-1"
     transcript: Optional[str] = None
     generated_content: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    status: EpisodeStatus
+    status: Union[EpisodeStatus, str] = EpisodeStatus.RESEARCH
     human_feedback: Optional[str] = None
-    clips: Optional[List[Clip]] = None
-    distribution_channels: Optional[List[DistributionChannel]] = None
-    socials_schedule: Optional[List[SocialsSchedule]] = None
-    word_timeline: Optional[List[Dict[str, Any]]] = None
-    edit_decision_list: Optional[List[Dict[str, Any]]] = None
-    selected_llm_config: Optional[Dict[str, Any]] = None
+    clips: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    distribution_channels: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    socials_schedule: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    word_timeline: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    edit_decision_list: Optional[List[Dict[str, Any]]] = Field(default_factory=list)
+    selected_llm_config: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
     class Config:
         from_attributes = True
@@ -75,15 +75,16 @@ class Episode(Document):
     podcast_id: str = "podcast-1"
     transcript: Optional[str] = None
     generated_content: Dict[str, Any] = Field(default_factory=dict)
-    status: EpisodeStatus = EpisodeStatus.RESEARCH
+    status: Union[EpisodeStatus, str] = EpisodeStatus.RESEARCH
     human_feedback: Optional[str] = None
-    clips: List[Clip] = Field(default_factory=list)
-    distribution_channels: List[DistributionChannel] = Field(default_factory=list)
-    socials_schedule: List[SocialsSchedule] = Field(default_factory=list)
+    clips: List[Dict[str, Any]] = Field(default_factory=list)
+    distribution_channels: List[Dict[str, Any]] = Field(default_factory=list)
+    socials_schedule: List[Dict[str, Any]] = Field(default_factory=list)
     word_timeline: List[Dict[str, Any]] = Field(default_factory=list)
     edit_decision_list: List[Dict[str, Any]] = Field(default_factory=list)
     selected_llm_config: Dict[str, Any] = Field(default_factory=dict)
 
     class Settings:
         name = "episodes"
+
 

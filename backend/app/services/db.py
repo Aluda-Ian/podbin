@@ -122,20 +122,10 @@ class BeanieDatabaseService:
         self._in_memory_notifs = []
 
     def _load_users_from_file(self) -> List[Dict[str, Any]]:
-        file_path = Path("static") / "users_data.json"
-        if file_path.exists():
-            try:
-                import json
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list) and len(data) > 0:
-                        return data
-            except Exception as e:
-                print(f"Error loading users file: {e}")
         from app.core.security import hash_password
         default_users = [
             {
-                "id": "user-1",
+                "id": "user-super-admin",
                 "name": "Ian Aluda",
                 "email": "info@vendatechnologies.com",
                 "role": "Super Admin",
@@ -143,28 +133,20 @@ class BeanieDatabaseService:
                 "podcast_ids": ["*"],
                 "suspended": False,
                 "is_verified": True
-            },
-            {
-                "id": "user-2",
-                "name": "Demo Admin",
-                "email": "admin@podbin.com",
-                "role": "Admin",
-                "password": hash_password("admin123"),
-                "podcast_ids": ["*"],
-                "suspended": False,
-                "is_verified": True
-            },
-            {
-                "id": "user-3",
-                "name": "Sarah Chen",
-                "email": "owner@podbin.com",
-                "role": "Podcast Owner",
-                "password": hash_password("owner123"),
-                "podcast_ids": ["podcast-1"],
-                "suspended": False,
-                "is_verified": True
             }
         ]
+        file_path = Path("static") / "users_data.json"
+        if file_path.exists():
+            try:
+                import json
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list) and len(data) > 0:
+                        filtered = [u for u in data if u.get("email", "").strip().lower() not in ("admin@podbin.com", "owner@podbin.com", "creator@podbin.com")]
+                        if len(filtered) > 0:
+                            return filtered
+            except Exception as e:
+                print(f"Error loading users file: {e}")
         return default_users
 
     def get_static_file_path(self, filename: str) -> Path:
@@ -333,25 +315,34 @@ class BeanieDatabaseService:
         
         # Seed default admin users ONLY if the MongoDB User collection is completely empty
         try:
+            # Remove legacy demo users from MongoDB Atlas if present
+            demo_emails = ["admin@podbin.com", "owner@podbin.com", "creator@podbin.com"]
+            for demo_email in demo_emails:
+                demo_u = await User.find_one(User.email == demo_email)
+                if demo_u:
+                    await demo_u.delete()
+                    print(f"[DB CLEANUP] Deleted legacy demo user {demo_email} from MongoDB Atlas.")
+
             user_count = await User.count()
             if user_count == 0:
-                print("[DB] User collection is empty. Seeding initial admin users into MongoDB...")
+                print("[DB] User collection is empty. Seeding initial Super Admin into MongoDB...")
                 for u in self._in_memory_users:
                     u_email = u.get("email", "").strip().lower()
-                    if u_email:
+                    if u_email and u_email == "info@vendatechnologies.com":
                         existing = await User.find_one(User.email == u_email)
                         if not existing:
                             db_user = User(
-                                id=u.get("id") or f"user-1",
-                                name=u.get("name", ""),
+                                id=u.get("id") or "user-super-admin",
+                                name=u.get("name", "Ian Aluda"),
                                 email=u_email,
-                                role=u.get("role", "Team Member"),
+                                role=u.get("role", "Super Admin"),
                                 password=u.get("password", ""),
-                                podcast_ids=u.get("podcast_ids", ["podcast-1"]),
+                                podcast_ids=u.get("podcast_ids", ["*"]),
                                 suspended=u.get("suspended", False),
                                 is_verified=u.get("is_verified", True)
                             )
                             await db_user.insert()
+                            print(f"[DB ATLAS SUCCESS] Super Admin {u_email} seeded into MongoDB Atlas!")
         except Exception as e:
             print(f"[DB] User seed check notice: {e}")
 
@@ -413,8 +404,9 @@ class BeanieDatabaseService:
             try:
                 db_ep = Episode(**episode)
                 await db_ep.insert()
-            except Exception:
-                pass
+                print(f"[DB ATLAS SUCCESS] Saved episode '{episode.get('title')}' (ID: {episode.get('id')}) to MongoDB!")
+            except Exception as e:
+                print(f"[DB ERROR] add_episode failed to insert into MongoDB: {e}")
         return episode
 
     async def update_episode(self, episode_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -733,13 +725,32 @@ class BeanieDatabaseService:
                 
         return deleted
 
-    async def invite_user(self, name: str, email: str, role: str) -> Dict[str, Any]:
+    async def invite_user(self, name: str, email: str, role: str, podcast_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         users = await self.get_users()
         for u in users:
-            if u.get("email") == email:
+            if u.get("email", "").strip().lower() == email.strip().lower():
                 return u
         from app.core.security import hash_password
-        return await self.create_user({"name": name, "email": email, "role": role, "password": hash_password("password123")})
+        p_ids = podcast_ids or ["podcast-1"]
+        return await self.create_user({
+            "name": name,
+            "email": email.strip().lower(),
+            "role": role,
+            "password": hash_password("password123"),
+            "podcast_ids": p_ids
+        })
+
+    async def get_team_members(self, podcast_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        all_users = await self.get_users()
+        if not podcast_ids or "*" in podcast_ids:
+            return all_users
+        
+        filtered = []
+        for u in all_users:
+            u_pods = u.get("podcast_ids", [])
+            if "*" in u_pods or any(pid in podcast_ids for pid in u_pods):
+                filtered.append(u)
+        return filtered
 
     # API Keys Operations
     async def get_api_keys(self) -> Dict[str, str]:

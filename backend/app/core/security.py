@@ -108,16 +108,21 @@ async def verify_admin_token(authorization: Optional[str] = Header(None)) -> str
     
     user_id = await verify_token(authorization)
     
-    # Check if user is admin
+    # Check if user is admin or podcast owner
     users = await db.get_users()
     for user in users:
-        if user["id"] == user_id and user.get("role") in ["admin", "Super Admin", "ADMIN"]:
+        if user["id"] == user_id and user.get("role") in ["admin", "Super Admin", "ADMIN", "Podcast Owner"]:
             return user_id
     
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="Admin access required"
     )
+
+
+async def verify_owner_or_admin_token(authorization: Optional[str] = Header(None)) -> str:
+    """Verify JWT token for admin or podcast owner access"""
+    return await verify_admin_token(authorization)
 
 
 async def validate_openai_api_key(api_key: str) -> bool:
