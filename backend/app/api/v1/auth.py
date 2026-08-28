@@ -289,8 +289,11 @@ class GoogleAuthRequest(BaseModel):
 
 @router.get("/google/client-id")
 async def get_google_client_id():
+    settings_data = await db.get_settings()
+    ic = settings_data.get("integration_credentials", {}) or {}
+    g_cid = ic.get("google", {}).get("client_id") or os.getenv("GOOGLE_CLIENT_ID", "")
     return {
-        "client_id": os.getenv("GOOGLE_CLIENT_ID", "")
+        "client_id": g_cid
     }
 
 
