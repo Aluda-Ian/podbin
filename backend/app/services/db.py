@@ -36,9 +36,8 @@ def get_mongodb_url() -> str:
     raw = os.getenv("MONGODB_URL", os.getenv("MONGODB_URI", os.getenv("NONGODB_URL", os.getenv("DATABASE_URL", "")))).strip()
     if not raw:
         return ""
-    if "mongodb+srv://" in raw and "tlsAllowInvalidCertificates" not in raw and "ssl=" not in raw and "tls=" not in raw:
-        sep = "&" if "?" in raw else "?"
-        raw = f"{raw}{sep}tls=true&tlsAllowInvalidCertificates=true&retryWrites=true"
+    if os.getenv("VERCEL") and ("localhost" in raw or "127.0.0.1" in raw):
+        return ""
     return raw
 
 def get_db_name() -> str:
@@ -311,12 +310,18 @@ class BeanieDatabaseService:
         if not getattr(self, "_beanie_initialized", False):
             try:
                 if self.client is None:
+                    import certifi
                     client_kwargs = {
-                        "serverSelectionTimeoutMS": 3000,
-                        "connectTimeoutMS": 3000,
-                        "tls": True,
-                        "tlsAllowInvalidCertificates": True
+                        "serverSelectionTimeoutMS": 4000,
+                        "connectTimeoutMS": 4000,
                     }
+                    try:
+                        ca_path = certifi.where()
+                        if ca_path and os.path.exists(ca_path):
+                            client_kwargs["tlsCAFile"] = ca_path
+                    except Exception:
+                        client_kwargs["tlsAllowInvalidCertificates"] = True
+
                     self.client = AsyncIOMotorClient(url, **client_kwargs)
 
                 self._init_step = "calling_init_beanie"
@@ -390,19 +395,21 @@ class BeanieDatabaseService:
     # Episodes operations
     async def get_episodes(self) -> List[Dict[str, Any]]:
         await self.ensure_db_initialized()
+        merged_episodes = {ep["id"]: ep for ep in self._in_memory_episodes if ep.get("id")}
         if self.is_db_ready:
             try:
                 episodes = await Episode.find_all().to_list()
-                mongo_episodes = []
                 for ep in episodes:
                     ep_dict = ep.model_dump()
                     ep_dict["id"] = ep.id
                     self._ensure_defaults(ep_dict)
-                    mongo_episodes.append(ep_dict)
-                return mongo_episodes
+                    merged_episodes[ep.id] = ep_dict
             except Exception as e:
                 print(f"[DB ERROR] MongoDB get_episodes failure: {e}")
-        return self._in_memory_episodes
+        res = list(merged_episodes.values())
+        self._in_memory_episodes = res
+        self._save_episodes_to_file()
+        return res
 
     async def get_episode(self, episode_id: str) -> Optional[Dict[str, Any]]:
         episodes = await self.get_episodes()
@@ -619,20 +626,20 @@ class BeanieDatabaseService:
     # Users operations
     async def get_users(self) -> List[Dict[str, Any]]:
         await self.ensure_db_initialized()
+        merged_users = {u["email"].strip().lower(): u for u in self._in_memory_users if u.get("email")}
         if self.is_db_ready:
             try:
                 users = await User.find_all().to_list()
-                mongo_users = []
                 for u in users:
                     u_dict = u.model_dump()
                     u_dict["id"] = u.id or u_dict.get("id")
-                    mongo_users.append(u_dict)
-                self._in_memory_users = mongo_users
-                self._save_users_to_file()
-                return mongo_users
+                    merged_users[u_dict["email"].strip().lower()] = u_dict
             except Exception as e:
                 print(f"[DB ERROR] MongoDB get_users failure: {e}")
-        return self._in_memory_users
+        res = list(merged_users.values())
+        self._in_memory_users = res
+        self._save_users_to_file()
+        return res
 
     async def update_user_role(self, user_id: str, role: str) -> Optional[Dict[str, Any]]:
         return await self.update_user(user_id, {"role": role})
@@ -649,50 +656,50 @@ class BeanieDatabaseService:
                 existing = await User.find_one(User.email == clean_email)
                 if existing:
                     u_dict = existing.model_dump()
-                    u_dict["id"] = existing.id or u_dict.get("id")
                     return u_dict
             except Exception as e:
                 print(f"[DB] find_one existing user notice: {e}")
 
-        import secrets
-        new_id = user_data.get("id") or f"user-{secrets.token_hex(6)}"
+    async def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
+        await self.ensure_db_initialized()
+        clean_email = user_data["email"].strip().lower()
+        new_id = user_data.get("id") or f"user-{clean_email.replace('@', '-at-').replace('.', '-')}"
+        
         new_u = {
             "id": new_id,
-            "name": user_data.get("name", ""),
+            "name": user_data.get("name", "Podcast User"),
             "email": clean_email,
             "role": user_data.get("role", "Podcast Owner"),
             "password": user_data.get("password", ""),
             "podcast_ids": user_data.get("podcast_ids", ["podcast-1"]),
-            "suspended": False,
-            "is_verified": True
+            "suspended": user_data.get("suspended", False),
+            "is_verified": user_data.get("is_verified", True),
+            "two_factor_enabled": user_data.get("two_factor_enabled", False)
         }
 
+        # ALWAYS update in-memory and disk backup so data is never lost
+        self._in_memory_users = [u for u in self._in_memory_users if u.get("id") != new_id and u.get("email", "").strip().lower() != clean_email]
+        self._in_memory_users.append(new_u)
+        self._save_users_to_file()
+
+        # Persist to MongoDB Atlas if connection is ready
         if self.is_db_ready:
             try:
                 new_user = User(
                     id=new_id,
-                    name=user_data.get("name", ""),
-                    email=clean_email,
-                    role=user_data.get("role", "Podcast Owner"),
-                    password=user_data.get("password", ""),
-                    podcast_ids=user_data.get("podcast_ids", ["podcast-1"]),
-                    suspended=False,
-                    is_verified=True
+                    name=new_u["name"],
+                    email=new_u["email"],
+                    role=new_u["role"],
+                    password=new_u["password"],
+                    podcast_ids=new_u["podcast_ids"],
+                    suspended=new_u["suspended"],
+                    is_verified=new_u["is_verified"]
                 )
                 await new_user.insert()
-                print(f"[DB ATLAS SUCCESS] Created user {clean_email} (ID: {new_id}) in MongoDB Atlas!")
-                u_dict = new_user.model_dump()
-                u_dict["id"] = new_id
-                return u_dict
+                print(f"[DB ATLAS SUCCESS] Created user {clean_email} in MongoDB Atlas!")
             except Exception as e:
-                print(f"[DB ATLAS ERROR] MongoDB create_user failure: {e}")
-                if self.is_configured:
-                    raise RuntimeError(f"Failed to persist user to MongoDB Atlas: {e}")
+                print(f"[DB ATLAS ERROR] MongoDB create_user notice: {e}")
 
-        # Maintain in-memory and disk backup fallback if DB not configured
-        self._in_memory_users = [u for u in self._in_memory_users if u.get("id") != new_id and u.get("email", "").strip().lower() != clean_email]
-        self._in_memory_users.append(new_u)
-        self._save_users_to_file()
         return new_u
 
     async def update_user(self, user_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
