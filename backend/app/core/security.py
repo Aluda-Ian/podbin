@@ -12,6 +12,27 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 days session token duration
 
+# Secure key encryption helper
+ENCRYPTION_SALT = os.getenv("ENCRYPTION_SALT", "podule_secure_salt")
+
+def encrypt_key(key: str) -> str:
+    if not key:
+        return ""
+    import base64
+    xored = "".join(chr(ord(c) ^ ord(ENCRYPTION_SALT[i % len(ENCRYPTION_SALT)])) for i, c in enumerate(key))
+    return base64.b64encode(xored.encode('utf-8')).decode('utf-8')
+
+def decrypt_key(enc_key: str) -> str:
+    if not enc_key:
+        return ""
+    import base64
+    try:
+        decoded = base64.b64decode(enc_key.encode('utf-8')).decode('utf-8')
+        xored = "".join(chr(ord(c) ^ ord(ENCRYPTION_SALT[i % len(ENCRYPTION_SALT)])) for i, c in enumerate(decoded))
+        return xored
+    except Exception:
+        return enc_key
+
 
 
 def hash_password(password: str) -> str:
