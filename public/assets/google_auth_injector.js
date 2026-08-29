@@ -8,12 +8,27 @@
   }
 
   async function injectGoogleLoginButton() {
-    if (!window.location.pathname.includes('/login') && !window.location.pathname.includes('/register')) return;
-    if (document.getElementById('google-auth-container')) return;
+    if (!window.location.pathname.includes('/login') && !window.location.pathname.includes('/register')) {
+      const existing = document.querySelectorAll('#google-auth-container');
+      existing.forEach(el => el.remove());
+      return;
+    }
+
+    // Remove duplicates if more than 1 exists
+    const existing = document.querySelectorAll('#google-auth-container');
+    if (existing.length > 1) {
+      for (let i = 1; i < existing.length; i++) {
+        existing[i].remove();
+      }
+    }
+    if (existing.length >= 1) return;
 
     // Find the login/register card form or container
     const form = document.querySelector('form') || document.querySelector('.bg-panel') || document.querySelector('button[type="submit"]')?.parentElement;
     if (!form) return;
+
+    // Double check container doesn't exist inside form
+    if (form.querySelector('#google-auth-container')) return;
 
     // Fetch Google Client ID from backend
     let clientId = '';
