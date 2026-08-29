@@ -52,7 +52,7 @@ def get_db_name() -> str:
 
 # Define persistent Beanie Documents for internal tables
 class Approval(Document):
-    id: str = Field(default=None)
+    id: Optional[str] = Field(default=None)
     podcast_id: str
     type: str
     title: str
@@ -66,7 +66,7 @@ class Approval(Document):
         name = "approvals"
 
 class Agent(Document):
-    id: str = Field(default=None)  # Stored as the agent's name
+    id: Optional[str] = Field(default=None)  # Stored as the agent's name
     name: str  # Kept for backend/frontend mapping and compatibility
     role: str
     status: str
@@ -78,7 +78,7 @@ class Agent(Document):
         name = "agents"
 
 class SettingsDocument(Document):
-    id: str = Field(default="1")
+    id: Optional[str] = Field(default="1")
     workspaceName: str
     showName: str
     primaryHost: str
@@ -100,7 +100,7 @@ class SettingsDocument(Document):
         name = "settings"
 
 class APIKeysDocument(Document):
-    id: str = Field(default="1")
+    id: Optional[str] = Field(default="1")
     deepgram: Optional[str] = ""
     openai: Optional[str] = ""
     elevenlabs: Optional[str] = ""

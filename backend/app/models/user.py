@@ -52,7 +52,7 @@ class TokenResponse(BaseModel):
     user: UserResponse
 
 class User(Document):
-    id: str = Field(default=None)
+    id: Optional[str] = Field(default=None)
     name: str
     email: str
     role: str

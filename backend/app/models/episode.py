@@ -58,7 +58,7 @@ class EpisodeResponse(BaseModel):
 
 
 class Episode(Document):
-    id: str = Field(default=None)
+    id: Optional[str] = Field(default=None)
     title: str
     guest: str
     avatar: str = "guest1"
