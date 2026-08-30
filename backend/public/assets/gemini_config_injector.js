@@ -2,8 +2,7 @@
  * gemini_config_injector.js
  *
  * Injects Google Gemini API and Google OAuth configuration cards into the
- * Admin API Configuration and Settings pages.
- * Handles DOM lifecycle safely without throwing TypeErrors on null node checks.
+ * Admin API Configuration and Settings pages safely without any recursive MutationObservers.
  */
 (function() {
   'use strict';
@@ -35,6 +34,12 @@
   function injectCards() {
     if (!isConfigPage()) return;
 
+    const existingGemini = document.getElementById('gemini-api-card');
+    const existingOauth = document.getElementById('google-oauth-card');
+    if (existingGemini && existingOauth) {
+      return; // Already present, nothing to do
+    }
+
     // Find the cards grid container
     const grid = document.querySelector('form .grid') ||
                  document.querySelector('.grid.grid-cols-1') ||
@@ -42,24 +47,12 @@
                  document.querySelector('.grid');
     if (!grid) return;
 
-    // Deduplicate existing cards
-    const geminiCards = document.querySelectorAll('#gemini-api-card');
-    if (geminiCards.length > 1) {
-      for (let i = 1; i < geminiCards.length; i++) geminiCards[i].remove();
-    }
-    const oauthCards = document.querySelectorAll('#google-oauth-card');
-    if (oauthCards.length > 1) {
-      for (let i = 1; i < oauthCards.length; i++) oauthCards[i].remove();
-    }
-
     const token = getAuthToken();
-    const existingGemini = document.getElementById('gemini-api-card');
-    const existingOauth = document.getElementById('google-oauth-card');
 
     // -------------------------------------------------------------
     // 1. Google Gemini API Card
     // -------------------------------------------------------------
-    if (!existingGemini || !grid.contains(existingGemini)) {
+    if (!document.getElementById('gemini-api-card')) {
       const card = document.createElement('div');
       card.id = 'gemini-api-card';
       card.className = 'bg-panel border border-border rounded-xl p-5 space-y-4 flex flex-col justify-between shadow-sm hover:border-foreground/5 transition-all';
@@ -174,7 +167,6 @@
         }
       });
 
-      // Fetch live key from server
       if (token) {
         fetch('/api/v1/admin/api-keys', { headers: { 'Authorization': `Bearer ${token}` } })
           .then(r => r.ok ? r.json() : null)
@@ -192,7 +184,7 @@
     // -------------------------------------------------------------
     // 2. Google OAuth Setup Card
     // -------------------------------------------------------------
-    if (!existingOauth || !grid.contains(existingOauth)) {
+    if (!document.getElementById('google-oauth-card')) {
       const oauthCard = document.createElement('div');
       oauthCard.id = 'google-oauth-card';
       oauthCard.className = 'bg-panel border border-border rounded-xl p-5 space-y-4 flex flex-col justify-between shadow-sm hover:border-foreground/5 transition-all';
@@ -298,7 +290,6 @@
         }
       });
 
-      // Fetch live settings from server
       if (token) {
         fetch('/api/v1/settings', { headers: { 'Authorization': `Bearer ${token}` } })
           .then(r => r.ok ? r.json() : null)
@@ -328,25 +319,18 @@
     }
   }
 
-  const observer = new MutationObserver(() => {
-    handleAdminAnalyticsRedirect();
-    injectCards();
-  });
-
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
       handleAdminAnalyticsRedirect();
-      observer.observe(document.body, { childList: true, subtree: true });
       injectCards();
     });
   } else {
     handleAdminAnalyticsRedirect();
-    observer.observe(document.body, { childList: true, subtree: true });
     injectCards();
   }
 
   setInterval(() => {
     handleAdminAnalyticsRedirect();
     injectCards();
-  }, 800);
+  }, 1000);
 })();
