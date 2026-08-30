@@ -13,6 +13,7 @@ from app.models.episode import EpisodeResponse, Clip, DistributionChannel, Socia
 from app.services.db import db
 from app.core.config import settings
 from app.services.distribution import publish_to_youtube, generate_spotify_rss, publish_to_tiktok
+from app.services.transcription import transcribe_media_pipeline
 from app.services.llm import generate_metadata
 from pydantic import BaseModel
 
