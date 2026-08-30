@@ -19,19 +19,41 @@ def encrypt_key(key: str) -> str:
     if not key:
         return ""
     import base64
-    xored = "".join(chr(ord(c) ^ ord(ENCRYPTION_SALT[i % len(ENCRYPTION_SALT)])) for i, c in enumerate(key))
-    return base64.b64encode(xored.encode('utf-8')).decode('utf-8')
+    key_bytes = key.encode("utf-8")
+    salt_bytes = ENCRYPTION_SALT.encode("utf-8")
+    xored_bytes = bytes([b ^ salt_bytes[i % len(salt_bytes)] for i, b in enumerate(key_bytes)])
+    return base64.b64encode(xored_bytes).decode("ascii")
 
 def decrypt_key(enc_key: str) -> str:
     if not enc_key:
         return ""
     import base64
+    raw = enc_key[4:] if enc_key.startswith("enc:") else enc_key
+    raw = raw.strip()
+    if not raw:
+        return ""
+
+    # 1. Standard byte-level XOR decryption
     try:
-        decoded = base64.b64decode(enc_key.encode('utf-8')).decode('utf-8')
-        xored = "".join(chr(ord(c) ^ ord(ENCRYPTION_SALT[i % len(ENCRYPTION_SALT)])) for i, c in enumerate(decoded))
-        return xored
+        xored_bytes = base64.b64decode(raw.encode("ascii"))
+        salt_bytes = ENCRYPTION_SALT.encode("utf-8")
+        decrypted = bytes([b ^ salt_bytes[i % len(salt_bytes)] for i, b in enumerate(xored_bytes)]).decode("utf-8")
+        if decrypted:
+            return decrypted
     except Exception:
-        return enc_key
+        pass
+
+    # 2. Fallback: legacy character-level XOR with latin-1 decoding
+    try:
+        decoded_bytes = base64.b64decode(raw)
+        decoded_str = decoded_bytes.decode("latin-1")
+        xored = "".join(chr(ord(c) ^ ord(ENCRYPTION_SALT[i % len(ENCRYPTION_SALT)])) for i, c in enumerate(decoded_str))
+        if xored:
+            return xored
+    except Exception:
+        pass
+
+    return raw if not raw.startswith("enc:") else ""
 
 
 
