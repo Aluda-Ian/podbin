@@ -387,8 +387,9 @@ async def transcribe_media_pipeline(media_path_or_url: str) -> Dict[str, Any]:
             print(f"[Transcription] OpenAI Whisper error: {e}")
             errors.append(f"OpenAI Whisper: {e}")
 
-    # If no provider succeeded, raise a clear error
-    err_summary = "; ".join(errors) if errors else "No active Admin API keys found."
-    raise RuntimeError(
-        f"Transcription failed ({err_summary}). Please enter and save your Gemini API Key in the Admin Dashboard (API Configuration)."
-    )
+    # If Gemini or other providers did not succeed, return clear instructions
+    if errors:
+        err_detail = " | ".join(errors)
+        raise RuntimeError(f"{err_detail}. Please verify your Gemini API Key in Admin Dashboard (/admin/api-config).")
+    raise RuntimeError("Google Gemini API is not configured. Please enter and save your Gemini API Key in the Admin Dashboard (/admin/api-config).")
+
