@@ -2,7 +2,8 @@
  * gemini_config_injector.js
  *
  * Injects Google Gemini API and Google OAuth configuration cards into the
- * Admin API Configuration and Settings pages safely without any recursive MutationObservers.
+ * Admin API Configuration page (/admin/api-config).
+ * Targets ONLY the main content area (<main form .grid>) and NEVER touches the sidebar.
  */
 (function() {
   'use strict';
@@ -26,26 +27,46 @@
   let cachedClientId = localStorage.getItem('podule_google_client_id') || '';
   let cachedClientSecret = localStorage.getItem('podule_google_client_secret') || '';
 
-  function isConfigPage() {
+  function isApiConfigPage() {
     const p = (window.location.pathname || '') + (window.location.hash || '');
-    return p.includes('api-config') || p.includes('api-keys') || p.includes('settings') || p.includes('/admin');
+    return p.includes('api-config') || p.includes('api-keys');
+  }
+
+  function cleanMisplacedCards() {
+    // Remove cards if found outside main or on non-config pages
+    const aside = document.querySelector('aside');
+    if (aside) {
+      const misplacedInAside = aside.querySelectorAll('#gemini-api-card, #google-oauth-card');
+      misplacedInAside.forEach(el => el.remove());
+    }
+
+    if (!isApiConfigPage()) {
+      const misplaced = document.querySelectorAll('#gemini-api-card, #google-oauth-card');
+      misplaced.forEach(el => el.remove());
+    }
   }
 
   function injectCards() {
-    if (!isConfigPage()) return;
+    cleanMisplacedCards();
 
-    const existingGemini = document.getElementById('gemini-api-card');
-    const existingOauth = document.getElementById('google-oauth-card');
-    if (existingGemini && existingOauth) {
-      return; // Already present, nothing to do
-    }
+    if (!isApiConfigPage()) return;
 
-    // Find the cards grid container
-    const grid = document.querySelector('form .grid') ||
-                 document.querySelector('.grid.grid-cols-1') ||
-                 document.querySelector('[class*="grid-cols-"]') ||
-                 document.querySelector('.grid');
+    // Locate the main content container (strictly inside <main>, never inside <aside>)
+    const mainArea = document.querySelector('main');
+    if (!mainArea) return;
+
+    const grid = mainArea.querySelector('form .grid') ||
+                 mainArea.querySelector('[class*="grid-cols-"]');
     if (!grid) return;
+
+    // Ensure grid is not inside a sidebar
+    if (grid.closest('aside')) return;
+
+    // Adjust grid to 2-col or 4-col for beautiful aesthetic layout
+    if (grid.classList.contains('lg:grid-cols-3')) {
+      grid.classList.remove('lg:grid-cols-3');
+      grid.classList.add('md:grid-cols-2', 'xl:grid-cols-4');
+    }
 
     const token = getAuthToken();
 
@@ -98,7 +119,7 @@
         </div>
       `;
 
-      grid.appendChild(card);
+      grid.prepend(card);
 
       const input = card.querySelector('#gemini-key-input');
       const toggleBtn = card.querySelector('#toggle-gemini-key');
@@ -182,60 +203,44 @@
     }
 
     // -------------------------------------------------------------
-    // 2. Google OAuth Setup Card
+    // 2. Google OAuth Setup Card (Inside Platform Integrations)
     // -------------------------------------------------------------
-    if (!document.getElementById('google-oauth-card')) {
+    const platformGrid = mainArea.querySelector('.grid.grid-cols-1.md\\:grid-cols-2.lg\\:grid-cols-3') ||
+                         mainArea.querySelector('[class*="md:grid-cols-2 lg:grid-cols-3"]');
+
+    if (platformGrid && !document.getElementById('google-oauth-card')) {
       const oauthCard = document.createElement('div');
       oauthCard.id = 'google-oauth-card';
-      oauthCard.className = 'bg-panel border border-border rounded-xl p-5 space-y-4 flex flex-col justify-between shadow-sm hover:border-foreground/5 transition-all';
+      oauthCard.className = 'p-4 bg-background/30 rounded-lg border border-border/60 space-y-3';
       oauthCard.innerHTML = `
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <div class="size-8 rounded-lg bg-blue-500/10 border border-blue-500/25 grid place-items-center text-blue-400 font-bold text-xs">
-                G
-              </div>
-              <div>
-                <h2 class="text-xs font-bold text-foreground uppercase tracking-wider">GOOGLE OAUTH SETUP</h2>
-                <p class="text-[10px] text-muted">Sign In & Sign Up with Google</p>
-              </div>
-            </div>
-            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" class="text-[10px] text-muted hover:text-foreground font-mono flex items-center gap-1 hover:underline text-xs">
-              Google Console ↗
-            </a>
+        <div class="text-[11px] font-bold text-foreground tracking-wide font-mono uppercase border-b border-border/40 pb-1.5 flex justify-between items-center">
+          <span>Google OAuth 2.0</span>
+          <span class="text-[9px] font-mono text-muted uppercase font-normal">google</span>
+        </div>
+        <div class="space-y-2">
+          <div class="space-y-1">
+            <label class="text-[9px] font-mono text-muted uppercase tracking-wider">CLIENT ID</label>
+            <input id="google-client-id-input" type="text" value="${cachedClientId}" placeholder="...apps.googleusercontent.com" class="w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs font-mono outline-none focus:border-accent text-foreground" />
           </div>
-          <p class="text-xs text-muted leading-relaxed">
-            Configure Google OAuth credentials to enable 1-click Sign In and Sign Up with Google across auth pages.
-          </p>
-          <div class="space-y-2 pt-1">
-            <div>
-              <label class="text-[10px] font-mono text-muted uppercase tracking-wider">CLIENT ID</label>
-              <input id="google-client-id-input" type="text" value="${cachedClientId}" placeholder="...apps.googleusercontent.com" class="w-full bg-background border border-border rounded-md px-3 py-1.5 text-xs font-mono outline-none focus:border-accent transition-colors text-foreground mt-1" />
-            </div>
-            <div>
-              <label class="text-[10px] font-mono text-muted uppercase tracking-wider">CLIENT SECRET</label>
-              <input id="google-client-secret-input" type="password" value="${cachedClientSecret}" placeholder="GOCSPX-..." class="w-full bg-background border border-border rounded-md px-3 py-1.5 text-xs font-mono outline-none focus:border-accent transition-colors text-foreground mt-1" />
-            </div>
+          <div class="space-y-1">
+            <label class="text-[9px] font-mono text-muted uppercase tracking-wider font-semibold">CLIENT SECRET</label>
+            <input id="google-client-secret-input" type="password" value="${cachedClientSecret}" placeholder="GOCSPX-..." class="w-full bg-background border border-border rounded-md px-2.5 py-1.5 text-xs font-mono outline-none focus:border-accent text-foreground" />
           </div>
         </div>
-        <div class="space-y-3 pt-4 border-t border-border/50">
-          <div class="flex items-center justify-between">
-            <button id="save-google-oauth-btn" type="button" class="px-3 py-1.5 text-xs font-semibold bg-foreground text-background rounded hover:bg-foreground/90 transition-colors inline-flex items-center gap-1.5 cursor-pointer">
-              Save Google OAuth Setup
-            </button>
-            <span id="google-oauth-status" class="text-[10px] font-mono text-emerald-400 hidden">✓ Saved</span>
-          </div>
-          <div id="google-oauth-msg" class="p-2 rounded font-mono text-[9px] hidden"></div>
+        <div class="pt-1 flex items-center justify-between">
+          <button id="save-google-oauth-btn" type="button" class="px-2.5 py-1 text-[10px] font-semibold border border-border rounded hover:bg-foreground/5 text-muted hover:text-foreground transition-colors cursor-pointer">
+            Save Google OAuth
+          </button>
+          <span id="google-oauth-status" class="text-[10px] font-mono text-emerald-400 hidden">✓ Saved</span>
         </div>
       `;
 
-      grid.appendChild(oauthCard);
+      platformGrid.prepend(oauthCard);
 
       const cidInput = oauthCard.querySelector('#google-client-id-input');
       const secretInput = oauthCard.querySelector('#google-client-secret-input');
       const saveBtn = oauthCard.querySelector('#save-google-oauth-btn');
       const statusSpan = oauthCard.querySelector('#google-oauth-status');
-      const msgBox = oauthCard.querySelector('#google-oauth-msg');
 
       saveBtn.addEventListener('click', async () => {
         const cid = cidInput.value.trim();
@@ -264,29 +269,19 @@
           });
 
           saveBtn.disabled = false;
-          saveBtn.textContent = 'Save Google OAuth Setup';
+          saveBtn.textContent = 'Save Google OAuth';
 
           if (saveResp.ok) {
             statusSpan.classList.remove('hidden');
-            msgBox.className = 'p-2 rounded font-mono text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-            msgBox.textContent = 'Google OAuth configuration saved successfully! Sign in with Google is now active.';
-            msgBox.classList.remove('hidden');
-
             cachedClientId = cid;
             cachedClientSecret = sec;
             localStorage.setItem('podule_google_client_id', cid);
             localStorage.setItem('podule_google_client_secret', sec);
-          } else {
-            msgBox.className = 'p-2 rounded font-mono text-[9px] bg-red-500/10 text-red-400 border border-red-500/20';
-            msgBox.textContent = 'Failed to save Google OAuth configuration.';
-            msgBox.classList.remove('hidden');
+            setTimeout(() => statusSpan.classList.add('hidden'), 3000);
           }
         } catch (e) {
           saveBtn.disabled = false;
-          saveBtn.textContent = 'Save Google OAuth Setup';
-          msgBox.className = 'p-2 rounded font-mono text-[9px] bg-red-500/10 text-red-400 border border-red-500/20';
-          msgBox.textContent = 'Network error saving Google OAuth setup.';
-          msgBox.classList.remove('hidden');
+          saveBtn.textContent = 'Save Google OAuth';
         }
       });
 
