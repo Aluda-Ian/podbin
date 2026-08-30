@@ -1,0 +1,35 @@
+# Apache & cPanel Configuration for Podule Studio
+# Increases maximum upload body size limit to 2GB to prevent HTTP 413 Payload Too Large
+
+LimitRequestBody 2147483648
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Handle Authorization Header
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+  # Serve existing static files directly
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Fallback all other requests to index.html for SPA routing
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_php7.c>
+  php_value upload_max_filesize 2000M
+  php_value post_max_size 2000M
+  php_value memory_limit 2048M
+  php_value max_execution_time 600
+</IfModule>
+
+<IfModule mod_php.c>
+  php_value upload_max_filesize 2000M
+  php_value post_max_size 2000M
+  php_value memory_limit 2048M
+  php_value max_execution_time 600
+</IfModule>

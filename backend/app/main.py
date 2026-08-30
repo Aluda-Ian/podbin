@@ -85,6 +85,26 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# ── Upload body-size guard ────────────────────────────────────────────────────
+# Rejects upload requests whose Content-Length exceeds 512 MB before the body
+# is streamed.  This is enforced at the HTTP middleware layer so Uvicorn/h11
+# never has to buffer the payload at all.
+_MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 512 MB
+_UPLOAD_PATHS = ("/api/v1/episodes/upload-direct", "/api/v1/episodes/", "/api/v1/episodes")
+
+@app.middleware("http")
+async def enforce_upload_size_limit(request, call_next):
+    path = request.url.path
+    if any(path.startswith(p) for p in _UPLOAD_PATHS):
+        cl = request.headers.get("content-length")
+        if cl and int(cl) > _MAX_UPLOAD_BYTES:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "File too large. Maximum allowed upload size is 512 MB."},
+            )
+    return await call_next(request)
+
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,

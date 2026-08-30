@@ -1,4 +1,5 @@
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException, status, Body, Request
+from fastapi.responses import StreamingResponse
 from fastapi.responses import FileResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -78,6 +79,7 @@ class UploadUrlRequest(BaseModel):
 class ConfirmUploadRequest(BaseModel):
     title: Optional[str] = "Ingested Episode"
     guest: Optional[str] = "Unknown Guest"
+    media_url: Optional[str] = None
     raw_video_url: Optional[str] = None
     raw_audio_url: Optional[str] = None
     media_type: Optional[str] = "video"
@@ -95,45 +97,101 @@ async def get_upload_url(payload: UploadUrlRequest = Body(...)):
     from app.services.storage import generate_signed_upload_url
     return generate_signed_upload_url(payload.filename, payload.content_type or "video/mp4")
 
-# TODO: Replace local disk file writes with direct-to-storage upload flow (signed URL -> S3/R2/Vercel Blob -> confirm endpoint)
+MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 512 MB hard limit
+
 @router.put("/upload-direct")
 async def upload_file_direct(filename: str, request: Request):
-    """Receive direct file stream for local dev / fallback object storage."""
+    """Receive direct file stream for local dev / fallback object storage.
+    
+    Streams chunks directly to disk — never buffers the full file in RAM.
+    Enforces a 512 MB cap; returns 413 if exceeded.
+    After writing to disk, also persists to MongoDB GridFS when DB is ready.
+    """
+    # Reject immediately if Content-Length header already tells us it's too big
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum allowed size is 512 MB."
+        )
+
     clean_fn = Path(filename).name
     upload_dir = get_upload_dir()
     file_path = upload_dir / clean_fn
-    body = await request.body()
+    total_written = 0
+
     try:
         with open(file_path, "wb") as f:
-            f.write(body)
+            async for chunk in request.stream():
+                total_written += len(chunk)
+                if total_written > MAX_UPLOAD_BYTES:
+                    # Remove partial file and reject
+                    try:
+                        file_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Maximum allowed size is 512 MB."
+                    )
+                f.write(chunk)
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Direct file write notice: {e}")
-    return {"status": "success", "filename": clean_fn, "size": len(body)}
+        print(f"[upload-direct] Stream write error: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload stream failed: {e}")
+
+    # Best-effort: persist to MongoDB GridFS (non-blocking, does not fail the upload)
+    try:
+        if db.is_db_ready:
+            from app.services.storage import store_file_gridfs
+            import asyncio
+            content_type = request.headers.get("content-type", "application/octet-stream")
+            asyncio.ensure_future(store_file_gridfs(clean_fn, file_path, content_type))
+    except Exception as gfs_err:
+        print(f"[upload-direct] GridFS persist notice: {gfs_err}")
+
+    return {"status": "success", "filename": clean_fn, "size": total_written}
 
 @router.get("/media/{filename}")
 async def serve_media_file(filename: str):
-    """Serve uploaded media file for playback and processing."""
+    """Serve uploaded media file for playback and processing.
+    Falls back to MongoDB GridFS if the local file is not found.
+    """
     clean_fn = Path(filename).name
+
+    def _get_content_type(fn: str) -> str:
+        fn_l = fn.lower()
+        if fn_l.endswith(".mp3"): return "audio/mpeg"
+        if fn_l.endswith(".wav"): return "audio/wav"
+        if fn_l.endswith(".webm"): return "video/webm"
+        if fn_l.endswith(".mkv"): return "video/x-matroska"
+        if fn_l.endswith(".mov"): return "video/quicktime"
+        return "video/mp4"
+
+    # Try local disk first
     file_path = get_upload_dir() / clean_fn
     if not file_path.exists():
         file_path = Path("static/uploads") / clean_fn
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Media file not found")
-    
-    content_type = "video/mp4"
-    fn_lower = clean_fn.lower()
-    if fn_lower.endswith(".mp3"): content_type = "audio/mpeg"
-    elif fn_lower.endswith(".wav"): content_type = "audio/wav"
-    elif fn_lower.endswith(".webm"): content_type = "video/webm"
-    elif fn_lower.endswith(".mkv"): content_type = "video/x-matroska"
-    elif fn_lower.endswith(".mov"): content_type = "video/quicktime"
-    
-    return FileResponse(path=file_path, media_type=content_type, filename=clean_fn)
+    if file_path.exists():
+        return FileResponse(path=file_path, media_type=_get_content_type(clean_fn), filename=clean_fn)
+
+    # Fall back to MongoDB GridFS
+    if db.is_db_ready:
+        try:
+            from app.services.storage import stream_file_gridfs
+            gen, ct = await stream_file_gridfs(clean_fn)
+            if gen:
+                return StreamingResponse(gen, media_type=ct or _get_content_type(clean_fn))
+        except Exception as gfs_err:
+            print(f"[serve_media] GridFS read error: {gfs_err}")
+
+    raise HTTPException(status_code=404, detail="Media file not found")
 
 @router.post("/confirm-upload", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 async def confirm_episode_upload(payload: ConfirmUploadRequest = Body(...)):
     """Register episode with cloud storage URL after direct frontend upload."""
-    media_url = payload.raw_video_url or payload.raw_audio_url
+    media_url = payload.raw_video_url or payload.raw_audio_url or payload.media_url
     if not media_url:
         raise HTTPException(status_code=400, detail="Missing storage media URL.")
     
@@ -149,8 +207,8 @@ async def confirm_episode_upload(payload: ConfirmUploadRequest = Body(...)):
         "date": date_str,
         "progress": 10,
         "note": "Media ingested via direct cloud upload. Ready for transcription.",
-        "raw_audio_url": payload.raw_audio_url or payload.raw_video_url,
-        "raw_video_url": payload.raw_video_url,
+        "raw_audio_url": payload.raw_audio_url or payload.raw_video_url or media_url,
+        "raw_video_url": payload.raw_video_url or (media_url if is_video else None),
         "media_type": "video" if is_video else "audio",
         "podcast_id": payload.podcast_id or "podcast-1",
         "transcript": None,
@@ -228,19 +286,28 @@ async def create_episode(
     avatar: Optional[UploadFile] = File(None),
     podcast_id: Optional[str] = Form("podcast-1")
 ):
-    content_type = request.headers.get("content-type", "").lower()
-    if "application/json" in content_type:
-        try:
-            json_body = await request.json()
-            title = title or json_body.get("title") or json_body.get("name")
-            guest = guest or json_body.get("guest") or json_body.get("author")
-            url = url or json_body.get("url") or json_body.get("raw_video_url") or json_body.get("raw_audio_url") or json_body.get("video_url") or json_body.get("audio_url")
-            podcast_id = podcast_id or json_body.get("podcast_id") or "podcast-1"
-        except Exception:
-            pass
+    title_str = title if isinstance(title, str) else None
+    guest_str = guest if isinstance(guest, str) else None
+    url_str = url if isinstance(url, str) else None
+    podcast_id_str = podcast_id if isinstance(podcast_id, str) else None
 
-    title = (title or "").strip() or "Ingested Episode"
-    guest = (guest or "").strip() or "Unknown Guest"
+    content_type = request.headers.get("content-type", "").lower()
+    try:
+        json_body = await request.json()
+        if isinstance(json_body, str):
+            title_str = title_str or json_body
+        elif isinstance(json_body, dict):
+            title_str = title_str or json_body.get("title") or json_body.get("name")
+            guest_str = guest_str or json_body.get("guest") or json_body.get("author")
+            url_str = url_str or json_body.get("url") or json_body.get("raw_video_url") or json_body.get("raw_audio_url") or json_body.get("video_url") or json_body.get("audio_url")
+            podcast_id_str = podcast_id_str or json_body.get("podcast_id") or "podcast-1"
+    except Exception:
+        pass
+
+    title = (title_str or "").strip() or "Ingested Episode"
+    guest = (guest_str or "").strip() or "Unknown Guest"
+    url = (url_str or "").strip() or None
+    podcast_id = (podcast_id_str or "").strip() or "podcast-1"
 
     media_path_or_url = url
     is_video = False

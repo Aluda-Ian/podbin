@@ -271,29 +271,29 @@ class BeanieDatabaseService:
         if getattr(self, "_beanie_initialized", False):
             return
         if getattr(self, "_init_in_progress", False):
+            import asyncio
+            for _ in range(50):
+                if getattr(self, "_beanie_initialized", False):
+                    return
+                await asyncio.sleep(0.1)
             return
         import time
         last_failed = getattr(self, "_last_failed_time", 0)
         # Cooldown: if DB initialization failed in the last 300 seconds (5 min), skip attempting re-init to prevent blocking HTTP requests
         if time.time() - last_failed < 300:
             return
-        import asyncio
         self._init_in_progress = True
-        try:
-            asyncio.create_task(self._safe_init_db())
-        except Exception:
-            self._init_in_progress = False
-
-    async def _safe_init_db(self):
-        import time
         try:
             await self.init_db()
         except Exception as e:
             self._last_failed_time = time.time()
-            self._last_error = f"safe_init_db error: {type(e).__name__} - {str(e)}"
+            self._last_error = f"ensure_db_initialized error: {type(e).__name__} - {str(e)}"
             print(f"[DB ERROR] Async init_db failure: {e}")
         finally:
             self._init_in_progress = False
+
+    async def _safe_init_db(self):
+        await self.ensure_db_initialized()
 
     async def init_db(self):
         import time
@@ -840,7 +840,7 @@ class BeanieDatabaseService:
         # Query MongoDB document if database is configured
         if self.is_db_ready:
             try:
-                doc = await APIKeysDocument.get("1")
+                doc = await APIKeysDocument.find_one()
                 if doc:
                     if doc.openai:
                         raw = decrypt_key(doc.openai[4:]) if doc.openai.startswith("enc:") else doc.openai
@@ -920,7 +920,7 @@ class BeanieDatabaseService:
         # Persist to MongoDB if configured
         if self.is_db_ready:
             try:
-                doc = await APIKeysDocument.get("1")
+                doc = await APIKeysDocument.find_one()
                 if not doc:
                     doc = APIKeysDocument(id="1", deepgram="", openai="", elevenlabs="", gemini="")
                     await doc.insert()
@@ -935,8 +935,9 @@ class BeanieDatabaseService:
                     doc.gemini = f"enc:{encrypt_key(resolved['gemini'])}"
 
                 await doc.save()
+                print("[DB ATLAS SUCCESS] API Keys updated successfully in Atlas MongoDB!")
             except Exception as e:
-                print(f"MongoDB API keys write warning: {e}")
+                print(f"MongoDB API keys write error: {e}")
 
         # Also persist to .env file if available
         try:

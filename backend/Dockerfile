@@ -27,4 +27,7 @@ RUN mkdir -p static/edited
 EXPOSE 8000
 
 # Run the app with uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# --http httptools     : uses the C-based httptools parser which has no hard body-size cap (unlike h11)
+# --timeout-keep-alive : allow slow uploads up to 10 minutes before the connection is closed
+# --limit-concurrency  : cap concurrent connections to avoid OOM on large parallel uploads
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--http", "httptools", "--timeout-keep-alive", "600", "--limit-concurrency", "20", "--reload"]
