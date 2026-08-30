@@ -643,6 +643,35 @@ class BeanieDatabaseService:
         await self.ensure_db_initialized()
         self._in_memory_settings.update(updates)
         self._save_settings_to_file()
+
+        # Sync integration credentials and SMTP to environment variables and .env file
+        try:
+            from app.services.env_manager import update_env_file
+            env_sync = {}
+
+            # 1. Sync Integration credentials (OAuth / API keys for platforms)
+            if "integration_credentials" in updates and isinstance(updates["integration_credentials"], dict):
+                for plat, creds in updates["integration_credentials"].items():
+                    if isinstance(creds, dict):
+                        if creds.get("client_id"):
+                            env_sync[f"{plat.upper()}_CLIENT_ID"] = str(creds["client_id"])
+                        if creds.get("client_secret"):
+                            env_sync[f"{plat.upper()}_CLIENT_SECRET"] = str(creds["client_secret"])
+
+            # 2. Sync SMTP credentials
+            if "smtp" in updates and updates["smtp"]:
+                smtp_data = updates["smtp"] if isinstance(updates["smtp"], dict) else getattr(updates["smtp"], "model_dump", lambda: {})()
+                if smtp_data.get("host"): env_sync["SMTP_HOST"] = str(smtp_data["host"])
+                if smtp_data.get("port"): env_sync["SMTP_PORT"] = str(smtp_data["port"])
+                if smtp_data.get("username"): env_sync["SMTP_USER"] = str(smtp_data["username"])
+                if smtp_data.get("password"): env_sync["SMTP_PASSWORD"] = str(smtp_data["password"])
+                if smtp_data.get("from_email"): env_sync["SMTP_FROM"] = str(smtp_data["from_email"])
+
+            if env_sync:
+                update_env_file(env_sync)
+        except Exception as env_err:
+            print(f"[DB] Settings env sync notice: {env_err}")
+
         if not self.is_db_ready:
             return self._in_memory_settings
         try:
