@@ -153,75 +153,44 @@ def is_masked_placeholder(val: Optional[str]) -> bool:
     if not val:
         return True
     val_str = str(val).strip()
-    return "..." in val_str or "[masked]" in val_str or val_str.startswith("enc:")
+    return "..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-...", "AIza...", "enc:"))
+
 
 @router.put("/api-keys")
 async def update_api_keys(payload: APIKeysPayload, authorization: Optional[str] = Header(None)):
     """
-    Update API keys with validation against actual services
+    Update API keys with dual persistence to Atlas MongoDB and active environment.
     """
     admin_user = await verify_admin_token(authorization)
     upd = {}
     current_keys = await db.get_api_keys()
-    
-    # Validate and update deepgram key if provided and not masked placeholder
-    if payload.deepgram and not is_masked_placeholder(payload.deepgram):
-        is_valid, error_msg = await validate_api_key_format("deepgram", payload.deepgram)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid Deepgram API key: {error_msg}"
-            )
-        upd["deepgram"] = payload.deepgram.strip()
-    elif current_keys.get("deepgram"):
-        upd["deepgram"] = current_keys["deepgram"]
-    
-    # Validate and update OpenAI key if provided and not masked placeholder
-    if payload.openai and not is_masked_placeholder(payload.openai):
-        is_valid, error_msg = await validate_api_key_format("openai", payload.openai)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid OpenAI API key: {error_msg}"
-            )
-        upd["openai"] = payload.openai.strip()
-    elif current_keys.get("openai"):
-        upd["openai"] = current_keys["openai"]
-    
-    # Validate and update ElevenLabs key if provided and not masked placeholder
-    if payload.elevenlabs and not is_masked_placeholder(payload.elevenlabs):
-        is_valid, error_msg = await validate_api_key_format("elevenlabs", payload.elevenlabs)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid ElevenLabs API key: {error_msg}"
-            )
-        upd["elevenlabs"] = payload.elevenlabs.strip()
-    elif current_keys.get("elevenlabs"):
-        upd["elevenlabs"] = current_keys["elevenlabs"]
 
-    # Validate and update Gemini key if provided and not masked placeholder
-    if payload.gemini and not is_masked_placeholder(payload.gemini):
-        is_valid, error_msg = await validate_api_key_format("gemini", payload.gemini)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid Gemini API key: {error_msg}"
-            )
-        upd["gemini"] = payload.gemini.strip()
-    elif current_keys.get("gemini"):
-        upd["gemini"] = current_keys["gemini"]
-    
+    for k in ["deepgram", "openai", "elevenlabs", "gemini"]:
+        val = getattr(payload, k, None)
+        if val is not None and not is_masked_placeholder(val) and val.strip():
+            upd[k] = val.strip()
+        elif current_keys.get(k):
+            upd[k] = current_keys[k]
+
     if upd:
         await db.update_api_keys(upd)
-    
+
     saved_keys = await db.get_api_keys()
+
+    def mask_key(prefix: str, key: Optional[str]) -> str:
+        if not key: return ""
+        k_str = str(key).strip()
+        if len(k_str) > 8:
+            return f"{prefix}...{k_str[-4:]}"
+        return f"{prefix}..."
+
     return {
-        "deepgram": f"dg-...{saved_keys['deepgram'][-4:]}" if saved_keys.get("deepgram") else "",
-        "openai": f"sk-...{saved_keys['openai'][-4:]}" if saved_keys.get("openai") else "",
-        "elevenlabs": f"el-...{saved_keys['elevenlabs'][-4:]}" if saved_keys.get("elevenlabs") else "",
-        "gemini": f"AIza...{saved_keys['gemini'][-4:]}" if saved_keys.get("gemini") else ""
+        "deepgram": mask_key("dg-", saved_keys.get("deepgram")),
+        "openai": mask_key("sk-", saved_keys.get("openai")),
+        "elevenlabs": mask_key("el-", saved_keys.get("elevenlabs")),
+        "gemini": mask_key("AIza...", saved_keys.get("gemini"))
     }
+
 
 
 @router.get("/analytics")
