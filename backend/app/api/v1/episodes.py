@@ -274,9 +274,9 @@ async def upload_file_direct(filename: str, request: Request):
     return {"status": "success", "filename": clean_fn, "size": total_written}
 
 @router.get("/media/{filename}")
-async def serve_media_file(filename: str):
-    """Serve uploaded media file for playback and processing.
-    Falls back to MongoDB GridFS if the local file is not found.
+async def serve_media_file(filename: str, request: Request):
+    """Serve uploaded media file for HTML5 video/audio playback and processing.
+    Supports HTTP 206 Partial Content / Range requests and GridFS fallback.
     """
     clean_fn = Path(filename).name
 
@@ -289,24 +289,126 @@ async def serve_media_file(filename: str):
         if fn_l.endswith(".mov"): return "video/quicktime"
         return "video/mp4"
 
-    # Try local disk first
+    content_type = _get_content_type(clean_fn)
+
+    # 1. Try local disk
     file_path = get_upload_dir() / clean_fn
     if not file_path.exists():
         file_path = Path("static/uploads") / clean_fn
-    if file_path.exists():
-        return FileResponse(path=file_path, media_type=_get_content_type(clean_fn), filename=clean_fn)
+    if not file_path.exists():
+        file_path = Path(__file__).resolve().parents[3] / "static" / "uploads" / clean_fn
 
-    # Fall back to MongoDB GridFS
-    if db.is_db_ready:
+    if file_path.exists():
+        file_size = file_path.stat().st_size
+        range_header = request.headers.get("range")
+        if range_header:
+            try:
+                byte_range = range_header.replace("bytes=", "").split("-")
+                start = int(byte_range[0]) if byte_range[0] else 0
+                end = int(byte_range[1]) if len(byte_range) > 1 and byte_range[1] else file_size - 1
+                end = min(end, file_size - 1)
+                chunk_len = (end - start) + 1
+
+                def iterfile():
+                    with open(file_path, "rb") as f:
+                        f.seek(start)
+                        remaining = chunk_len
+                        while remaining > 0:
+                            read_size = min(remaining, 256 * 1024)
+                            data = f.read(read_size)
+                            if not data:
+                                break
+                            remaining -= len(data)
+                            yield data
+
+                headers = {
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(chunk_len),
+                    "Content-Type": content_type,
+                    "Access-Control-Allow-Origin": "*",
+                }
+                return StreamingResponse(iterfile(), status_code=206, headers=headers)
+            except Exception as e:
+                print(f"[serve_media] Range streaming notice: {e}")
+
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Content-Type": content_type,
+            "Access-Control-Allow-Origin": "*",
+        }
+        return FileResponse(path=file_path, media_type=content_type, filename=clean_fn, headers=headers)
+
+    # 2. Fall back to MongoDB GridFS
+    if db.is_db_ready and db.client is not None:
         try:
-            from app.services.storage import stream_file_gridfs
-            gen, ct = await stream_file_gridfs(clean_fn)
-            if gen:
-                return StreamingResponse(gen, media_type=ct or _get_content_type(clean_fn))
+            from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+            db_name = os.getenv("MONGODB_DB", "podule")
+            motor_db = db.client[db_name]
+            bucket = AsyncIOMotorGridFSBucket(motor_db, bucket_name="media")
+
+            grid_file = None
+            async for doc in bucket.find({"filename": clean_fn}):
+                grid_file = doc
+                break
+
+            if grid_file:
+                file_size = grid_file.length
+                stored_ct = (grid_file.metadata or {}).get("content_type", content_type)
+                
+                range_header = request.headers.get("range")
+                if range_header:
+                    try:
+                        byte_range = range_header.replace("bytes=", "").split("-")
+                        start = int(byte_range[0]) if byte_range[0] else 0
+                        end = int(byte_range[1]) if len(byte_range) > 1 and byte_range[1] else file_size - 1
+                        end = min(end, file_size - 1)
+                        chunk_len = (end - start) + 1
+
+                        async def iter_gridfs_range():
+                            dl_stream = await bucket.open_download_stream_by_name(clean_fn)
+                            await dl_stream.seek(start)
+                            remaining = chunk_len
+                            while remaining > 0:
+                                read_size = min(remaining, 256 * 1024)
+                                chunk = await dl_stream.read(read_size)
+                                if not chunk:
+                                    break
+                                remaining -= len(chunk)
+                                yield chunk
+
+                        headers = {
+                            "Content-Range": f"bytes {start}-{end}/{file_size}",
+                            "Accept-Ranges": "bytes",
+                            "Content-Length": str(chunk_len),
+                            "Content-Type": stored_ct,
+                            "Access-Control-Allow-Origin": "*",
+                        }
+                        return StreamingResponse(iter_gridfs_range(), status_code=206, headers=headers)
+                    except Exception as e:
+                        print(f"[serve_media_gridfs] Range error: {e}")
+
+                async def iter_gridfs_full():
+                    dl_stream = await bucket.open_download_stream_by_name(clean_fn)
+                    while True:
+                        chunk = await dl_stream.read(256 * 1024)
+                        if not chunk:
+                            break
+                        yield chunk
+
+                headers = {
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(file_size),
+                    "Content-Type": stored_ct,
+                    "Access-Control-Allow-Origin": "*",
+                }
+                return StreamingResponse(iter_gridfs_full(), media_type=stored_ct, headers=headers)
         except Exception as gfs_err:
             print(f"[serve_media] GridFS read error: {gfs_err}")
 
     raise HTTPException(status_code=404, detail="Media file not found")
+
 
 @router.post("/confirm-upload", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
 async def confirm_episode_upload(

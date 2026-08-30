@@ -3,7 +3,7 @@
  *
  * Injects Google Gemini API and Google OAuth configuration cards into the
  * Admin API Configuration and Settings pages.
- * Ensures cards persist across React component re-renders, route transitions, and theme switches.
+ * Handles DOM lifecycle safely without throwing TypeErrors on null node checks.
  */
 (function() {
   'use strict';
@@ -53,11 +53,13 @@
     }
 
     const token = getAuthToken();
+    const existingGemini = document.getElementById('gemini-api-card');
+    const existingOauth = document.getElementById('google-oauth-card');
 
     // -------------------------------------------------------------
     // 1. Google Gemini API Card
     // -------------------------------------------------------------
-    if (!grid.contains(document.getElementById('gemini-api-card'))) {
+    if (!existingGemini || !grid.contains(existingGemini)) {
       const card = document.createElement('div');
       card.id = 'gemini-api-card';
       card.className = 'bg-panel border border-border rounded-xl p-5 space-y-4 flex flex-col justify-between shadow-sm hover:border-foreground/5 transition-all';
@@ -190,7 +192,7 @@
     // -------------------------------------------------------------
     // 2. Google OAuth Setup Card
     // -------------------------------------------------------------
-    if (!grid.contains(document.getElementById('google-oauth-card'))) {
+    if (!existingOauth || !grid.contains(existingOauth)) {
       const oauthCard = document.createElement('div');
       oauthCard.id = 'google-oauth-card';
       oauthCard.className = 'bg-panel border border-border rounded-xl p-5 space-y-4 flex flex-col justify-between shadow-sm hover:border-foreground/5 transition-all';
