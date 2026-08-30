@@ -896,9 +896,15 @@ class BeanieDatabaseService:
         current_keys = await self.get_api_keys()
 
         def is_masked_or_invalid(val: Optional[str]) -> bool:
+            """Return True if the value is a placeholder/masked/already-encrypted value that should NOT be re-saved."""
             if not val: return True
             val_str = str(val).strip()
-            return "..." in val_str or "[masked]" in val_str or val_str.startswith(("sk-...", "dg-...", "el-..."))
+            # Reject masked UI placeholders, already-encrypted values, and empty-ish strings
+            return (
+                "..." in val_str
+                or "[masked]" in val_str
+                or val_str.startswith(("sk-...", "dg-...", "el-...", "AIza...", "enc:"))
+            )
 
         resolved = {}
         for k in ["openai", "deepgram", "elevenlabs", "gemini"]:
@@ -925,16 +931,26 @@ class BeanieDatabaseService:
                     doc = APIKeysDocument(id="1", deepgram="", openai="", elevenlabs="", gemini="")
                     await doc.insert()
 
-                if resolved.get("openai"):
-                    doc.openai = f"enc:{encrypt_key(resolved['openai'])}"
-                if resolved.get("deepgram"):
-                    doc.deepgram = f"enc:{encrypt_key(resolved['deepgram'])}"
-                if resolved.get("elevenlabs"):
-                    doc.elevenlabs = f"enc:{encrypt_key(resolved['elevenlabs'])}"
-                if resolved.get("gemini"):
-                    doc.gemini = f"enc:{encrypt_key(resolved['gemini'])}"
+                # Always write all four keys — use the resolved value (plaintext) or
+                # keep the existing encrypted value if this key wasn't changed
+                existing_enc = {
+                    "openai":    doc.openai    or "",
+                    "deepgram":  doc.deepgram  or "",
+                    "elevenlabs":doc.elevenlabs or "",
+                    "gemini":    getattr(doc, "gemini", "") or "",
+                }
+                for field in ["openai", "deepgram", "elevenlabs", "gemini"]:
+                    plain = resolved.get(field, "")
+                    if plain:
+                        # New plaintext value — encrypt and store
+                        setattr(doc, field, f"enc:{encrypt_key(plain)}")
+                    elif existing_enc[field]:
+                        # No new value — preserve whatever is already in the document
+                        setattr(doc, field, existing_enc[field])
+                    else:
+                        setattr(doc, field, "")
 
-                await doc.save()
+                await doc.replace()  # replace() writes the full document, avoiding partial-update gaps
                 print("[DB ATLAS SUCCESS] API Keys updated successfully in Atlas MongoDB!")
             except Exception as e:
                 print(f"MongoDB API keys write error: {e}")
@@ -943,9 +959,10 @@ class BeanieDatabaseService:
         try:
             from app.services.env_manager import update_env_file
             env_updates = {}
-            if resolved.get("openai"): env_updates["OPENAI_API_KEY"] = resolved["openai"]
-            if resolved.get("deepgram"): env_updates["DEEPGRAM_API_KEY"] = resolved["deepgram"]
-            if resolved.get("elevenlabs"): env_updates["ELEVENLABS_API_KEY"] = resolved["elevenlabs"]
+            if resolved.get("openai"):      env_updates["OPENAI_API_KEY"]      = resolved["openai"]
+            if resolved.get("deepgram"):    env_updates["DEEPGRAM_API_KEY"]    = resolved["deepgram"]
+            if resolved.get("elevenlabs"): env_updates["ELEVENLABS_API_KEY"]  = resolved["elevenlabs"]
+            if resolved.get("gemini"):      env_updates["GEMINI_API_KEY"]      = resolved["gemini"]
             if env_updates:
                 update_env_file(env_updates)
         except Exception as e:
