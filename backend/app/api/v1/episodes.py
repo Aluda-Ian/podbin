@@ -98,6 +98,125 @@ async def get_upload_url(payload: UploadUrlRequest = Body(...)):
     return generate_signed_upload_url(payload.filename, payload.content_type or "video/mp4")
 
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 512 MB hard limit
+CHUNK_SIZE_LIMIT = 10 * 1024 * 1024   # 10 MB max per chunk
+
+@router.post("/upload-chunk")
+async def upload_file_chunk(
+    file: UploadFile = File(...),
+    chunk_index: int = Form(...),
+    total_chunks: int = Form(...),
+    upload_id: str = Form(...),
+):
+    """
+    Accept a single chunk of a large file upload.
+
+    The frontend slices the file into ≤5 MB pieces and POSTs them one by one.
+    Each chunk is stored as a temp file: /tmp/uploads/<upload_id>.<chunk_index>
+    This keeps every individual HTTP request tiny, bypassing ALL web-server
+    body-size limits (Apache LimitRequestBody, Nginx client_max_body_size, etc.).
+    """
+    import re as _re
+    # Sanitise upload_id to prevent path traversal
+    safe_uid = _re.sub(r"[^a-zA-Z0-9_-]", "", upload_id)[:64]
+    if not safe_uid:
+        raise HTTPException(status_code=400, detail="Invalid upload_id")
+
+    tmp_dir = Path("/tmp/uploads") if os.getenv("VERCEL") else get_upload_dir() / "_chunks"
+    try:
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    chunk_path = tmp_dir / f"{safe_uid}.chunk{chunk_index}"
+    data = await file.read()
+
+    if len(data) > CHUNK_SIZE_LIMIT:
+        raise HTTPException(status_code=413, detail="Chunk too large. Max 10 MB per chunk.")
+
+    with open(chunk_path, "wb") as f:
+        f.write(data)
+
+    return {
+        "status": "ok",
+        "chunk_index": chunk_index,
+        "received_bytes": len(data),
+        "upload_id": safe_uid,
+    }
+
+
+@router.post("/upload-assemble")
+async def assemble_file_chunks(payload: dict = Body(...)):
+    """
+    Assemble previously uploaded chunks into the final file.
+
+    Expects: { upload_id, total_chunks, filename, content_type? }
+    Returns the download URL, identical to what /upload-direct used to return.
+    """
+    import re as _re
+    upload_id   = _re.sub(r"[^a-zA-Z0-9_-]", "", str(payload.get("upload_id", "")))[:64]
+    total_chunks: int = int(payload.get("total_chunks", 0))
+    filename    = Path(str(payload.get("filename", "media.mp4"))).name
+    content_type = str(payload.get("content_type", "video/mp4"))
+
+    if not upload_id or total_chunks < 1:
+        raise HTTPException(status_code=400, detail="upload_id and total_chunks are required")
+
+    tmp_dir = Path("/tmp/uploads") if os.getenv("VERCEL") else get_upload_dir() / "_chunks"
+    upload_dir = get_upload_dir()
+
+    # Verify all chunks exist before attempting assembly
+    missing = [i for i in range(total_chunks) if not (tmp_dir / f"{upload_id}.chunk{i}").exists()]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Missing chunks: {missing[:10]}")
+
+    # Assemble into the final destination file
+    dest_path = upload_dir / filename
+    total_written = 0
+    try:
+        with open(dest_path, "wb") as out:
+            for i in range(total_chunks):
+                chunk_path = tmp_dir / f"{upload_id}.chunk{i}"
+                with open(chunk_path, "rb") as ch:
+                    while True:
+                        buf = ch.read(256 * 1024)
+                        if not buf:
+                            break
+                        out.write(buf)
+                        total_written += len(buf)
+                # Remove chunk after writing
+                try:
+                    chunk_path.unlink()
+                except Exception:
+                    pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Assembly failed: {e}")
+
+    if total_written > MAX_UPLOAD_BYTES:
+        try:
+            dest_path.unlink()
+        except Exception:
+            pass
+        raise HTTPException(status_code=413, detail="Assembled file exceeds 512 MB limit.")
+
+    public_url = os.getenv("PUBLIC_URL", "http://localhost:8000").rstrip("/")
+    download_url = f"{public_url}/api/v1/episodes/media/{filename}"
+
+    # Best-effort GridFS persist (non-blocking)
+    try:
+        if db.is_db_ready:
+            from app.services.storage import store_file_gridfs
+            import asyncio
+            asyncio.ensure_future(store_file_gridfs(filename, dest_path, content_type))
+    except Exception:
+        pass
+
+    return {
+        "status": "assembled",
+        "filename": filename,
+        "size": total_written,
+        "download_url": download_url,
+    }
+
 
 @router.put("/upload-direct")
 async def upload_file_direct(filename: str, request: Request):

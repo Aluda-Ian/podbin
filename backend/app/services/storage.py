@@ -2,18 +2,25 @@ import os
 import secrets
 import re
 from datetime import datetime
-from typing import Dict, Any, Optional, AsyncGenerator, Tuple
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Optional, Tuple
+
+if TYPE_CHECKING:
+    pass
+
 
 def generate_signed_upload_url(filename: str, content_type: str = "video/mp4") -> Dict[str, Any]:
     """
     Generates a signed direct upload URL for cloud object storage (Vercel Blob / S3 / R2).
     Bypasses serverless function payload limits (~4.5MB).
     """
-    clean_stem = re.sub(r'[^a-zA-Z0-9_-]', '', os.path.splitext(filename)[0])
+    clean_stem = re.sub(r"[^a-zA-Z0-9_-]", "", os.path.splitext(filename)[0])
     ext = os.path.splitext(filename)[1] or ".mp4"
     if not clean_stem:
         clean_stem = "media"
-    unique_name = f"{clean_stem}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}{ext}"
+    unique_name = (
+        f"{clean_stem}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{secrets.token_hex(4)}{ext}"
+    )
 
     blob_token = os.getenv("BLOB_READ_WRITE_TOKEN")
     s3_bucket = os.getenv("S3_BUCKET") or os.getenv("AWS_STORAGE_BUCKET_NAME")
@@ -31,43 +38,45 @@ def generate_signed_upload_url(filename: str, content_type: str = "video/mp4") -
             "headers": {
                 "Authorization": f"Bearer {blob_token}",
                 "x-api-version": "7",
-                "content-type": content_type or "application/octet-stream"
-            }
+                "content-type": content_type or "application/octet-stream",
+            },
         }
-    elif s3_bucket:
+
+    if s3_bucket:
         try:
-            import boto3
+            import boto3  # type: ignore[import-untyped]
+
             s3_client = boto3.client(
-                's3',
+                "s3",
                 aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
                 aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-                region_name=os.getenv("AWS_REGION", "us-east-1")
+                region_name=os.getenv("AWS_REGION", "us-east-1"),
             )
-            presigned_url = s3_client.generate_presigned_url(
-                'put_object',
+            presigned_url: str = s3_client.generate_presigned_url(
+                "put_object",
                 Params={
-                    'Bucket': s3_bucket,
-                    'Key': f"uploads/{unique_name}",
-                    'ContentType': content_type
+                    "Bucket": s3_bucket,
+                    "Key": f"uploads/{unique_name}",
+                    "ContentType": content_type,
                 },
-                ExpiresIn=3600
+                ExpiresIn=3600,
             )
             region_str = f".{os.getenv('AWS_REGION')}" if os.getenv("AWS_REGION") else ""
-            download_url = f"https://{s3_bucket}.s3{region_str}.amazonaws.com/uploads/{unique_name}"
+            download_url = (
+                f"https://{s3_bucket}.s3{region_str}.amazonaws.com/uploads/{unique_name}"
+            )
             return {
                 "upload_url": presigned_url,
                 "download_url": download_url,
                 "filename": unique_name,
                 "storage_provider": "s3",
                 "method": "PUT",
-                "headers": {
-                    "Content-Type": content_type or "application/octet-stream"
-                }
+                "headers": {"Content-Type": content_type or "application/octet-stream"},
             }
         except Exception as e:
             print(f"[Storage] S3 presigned URL generation notice: {e}")
 
-    # Fallback to direct URL format for local dev / testing
+    # Fallback: direct stream to this server (local dev / no cloud storage configured)
     public_url = os.getenv("PUBLIC_URL", "https://podule.vendatechnologies.com").rstrip("/")
     return {
         "upload_url": f"{public_url}/api/v1/episodes/upload-direct?filename={unique_name}",
@@ -75,15 +84,18 @@ def generate_signed_upload_url(filename: str, content_type: str = "video/mp4") -
         "filename": unique_name,
         "storage_provider": "direct-stream",
         "method": "PUT",
-        "headers": {
-            "Content-Type": content_type or "application/octet-stream"
-        }
+        "headers": {"Content-Type": content_type or "application/octet-stream"},
     }
 
 
 # ─── MongoDB GridFS helpers ────────────────────────────────────────────────────
 
-async def store_file_gridfs(filename: str, file_path, content_type: str = "application/octet-stream") -> bool:
+
+async def store_file_gridfs(
+    filename: str,
+    file_path: "Path | str",
+    content_type: str = "application/octet-stream",
+) -> bool:
     """
     Persist a local file into MongoDB GridFS using Motor (async).
 
@@ -93,16 +105,16 @@ async def store_file_gridfs(filename: str, file_path, content_type: str = "appli
 
     Args:
         filename:     The name to store the file under in GridFS.
-        file_path:    Path-like object pointing to the already-written local file.
+        file_path:    Path or str pointing to the already-written local file.
         content_type: MIME type stored as GridFS file metadata.
 
     Returns:
         True on success, False on any error.
     """
     try:
-        from pathlib import Path as _Path
-        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-        from app.services.db import db as _db
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket  # type: ignore[import-untyped]
+
+        from app.services.db import db as _db  # local import to avoid circular refs
 
         if not _db.is_db_ready or _db.client is None:
             return False
@@ -111,22 +123,24 @@ async def store_file_gridfs(filename: str, file_path, content_type: str = "appli
         motor_db = _db.client[db_name]
         bucket = AsyncIOMotorGridFSBucket(motor_db, bucket_name="media")
 
-        # Delete any existing file with the same name to keep GridFS clean
+        # Remove any existing file with the same name so GridFS stays clean
         try:
             async for grid_file in bucket.find({"filename": filename}):
                 await bucket.delete(grid_file._id)
         except Exception:
             pass
 
-        local = _Path(file_path)
+        local = Path(file_path)
         if not local.exists():
             return False
 
-        CHUNK = 256 * 1024  # 256 KB read chunks
-        async with await bucket.open_upload_stream(filename, metadata={"content_type": content_type}) as stream:
+        chunk_size = 256 * 1024  # 256 KB read chunks
+        async with await bucket.open_upload_stream(
+            filename, metadata={"content_type": content_type}
+        ) as stream:
             with open(local, "rb") as fh:
                 while True:
-                    data = fh.read(CHUNK)
+                    data = fh.read(chunk_size)
                     if not data:
                         break
                     await stream.write(data)
@@ -141,15 +155,16 @@ async def store_file_gridfs(filename: str, file_path, content_type: str = "appli
 
 async def stream_file_gridfs(
     filename: str,
-) -> Tuple[Optional[AsyncGenerator], Optional[str]]:
+) -> Tuple[Optional[AsyncGenerator[bytes, None]], Optional[str]]:
     """
-    Return an async generator that streams a GridFS file in 256 KB chunks,
+    Return an async generator that yields a GridFS file in 256 KB chunks,
     along with its stored content-type.
 
     Returns (None, None) when the file is not found or MongoDB is unavailable.
     """
     try:
-        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket  # type: ignore[import-untyped]
+
         from app.services.db import db as _db
 
         if not _db.is_db_ready or _db.client is None:
@@ -159,7 +174,7 @@ async def stream_file_gridfs(
         motor_db = _db.client[db_name]
         bucket = AsyncIOMotorGridFSBucket(motor_db, bucket_name="media")
 
-        # Locate the file
+        # Find the file entry in GridFS
         grid_out = None
         async for f in bucket.find({"filename": filename}):
             grid_out = f
@@ -168,18 +183,20 @@ async def stream_file_gridfs(
         if grid_out is None:
             return None, None
 
-        content_type = (grid_out.metadata or {}).get("content_type", "application/octet-stream")
+        stored_ct: str = (grid_out.metadata or {}).get(
+            "content_type", "application/octet-stream"
+        )
 
-        async def _generate():
-            stream = await bucket.open_download_stream_by_name(filename)
-            CHUNK = 256 * 1024
+        async def _generate() -> AsyncGenerator[bytes, None]:
+            dl_stream = await bucket.open_download_stream_by_name(filename)
+            chunk_size = 256 * 1024
             while True:
-                data = await stream.read(CHUNK)
-                if not data:
+                chunk = await dl_stream.read(chunk_size)
+                if not chunk:
                     break
-                yield data
+                yield chunk
 
-        return _generate(), content_type
+        return _generate(), stored_ct
 
     except Exception as e:
         print(f"[GridFS] stream_file_gridfs error: {e}")
