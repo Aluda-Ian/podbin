@@ -1,9 +1,10 @@
 /**
  * chunked_upload_injector.js
  *
- * Intercepts XMLHttpRequest prototype to chunk large file uploads (5 MB per chunk).
- * Uses standard prototype method wrapping (NO Proxies) to prevent stack overflows
- * or circular event references.
+ * Intercepts frontend XMLHttpRequest file uploads and splits large files into 5 MB chunks.
+ * Uses a clean wrapper class around native XMLHttpRequest to provide fully writable
+ * properties (status, readyState, responseText) and realistic progress events without
+ * any fragile native property redefinitions or prototype collisions.
  */
 (function () {
   'use strict';
@@ -36,147 +37,217 @@
            Math.random().toString(36).slice(2, 10);
   }
 
-  // Preserve native prototype methods
-  const rawOpen = XMLHttpRequest.prototype.open;
-  const rawSend = XMLHttpRequest.prototype.send;
-  const rawSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+  const NativeXMLHttpRequest = window.XMLHttpRequest;
 
-  XMLHttpRequest.prototype.open = function (method, url) {
-    this._customMethod = (method || '').toUpperCase();
-    this._customUrl = url || '';
-    this._customHeaders = {};
-    return rawOpen.apply(this, arguments);
-  };
-
-  XMLHttpRequest.prototype.setRequestHeader = function (header, value) {
-    if (this._customHeaders) {
-      this._customHeaders[header] = value;
+  class FakeUploadEventTarget extends EventTarget {
+    constructor() {
+      super();
+      this.onprogress = null;
     }
-    return rawSetRequestHeader.apply(this, arguments);
-  };
+  }
 
-  XMLHttpRequest.prototype.send = function (body) {
-    const isDirectUpload = typeof this._customUrl === 'string' && this._customUrl.includes('/upload-direct');
-    const isFile = body instanceof Blob || (typeof File !== 'undefined' && body instanceof File);
+  class ChunkedXMLHttpRequest extends EventTarget {
+    constructor() {
+      super();
+      this.upload = new FakeUploadEventTarget();
+      this.readyState = 0;
+      this.status = 0;
+      this.statusText = '';
+      this.responseText = '';
+      this.response = '';
+      this.onload = null;
+      this.onerror = null;
+      this.onreadystatechange = null;
+      this.onloadend = null;
 
-    // Only intercept PUT uploads directed to /upload-direct
-    if (this._customMethod === 'PUT' && isDirectUpload && isFile) {
-      const xhr = this;
-      const fileBlob = body;
-      let filename = 'media.mp4';
+      this._headers = {};
+      this._method = 'GET';
+      this._url = '';
+      this._nativeXhr = null;
+    }
+
+    open(method, url, async, user, password) {
+      this._method = (method || '').toUpperCase();
+      this._url = url || '';
+      this.readyState = 1;
+
+      // For non-direct-upload requests, instantiate a real XMLHttpRequest
+      if (!this._isDirectUpload()) {
+        this._nativeXhr = new NativeXMLHttpRequest();
+
+        this._nativeXhr.upload.onprogress = (ev) => {
+          if (typeof this.upload.onprogress === 'function') {
+            this.upload.onprogress(ev);
+          }
+          this.upload.dispatchEvent(new CustomEvent('progress', { detail: ev }));
+        };
+
+        this._nativeXhr.onreadystatechange = () => {
+          this.readyState = this._nativeXhr.readyState;
+          this.status = this._nativeXhr.status;
+          this.statusText = this._nativeXhr.statusText;
+          this.responseText = this._nativeXhr.responseText;
+          this.response = this._nativeXhr.response;
+          if (typeof this.onreadystatechange === 'function') {
+            this.onreadystatechange();
+          }
+        };
+
+        this._nativeXhr.onload = () => {
+          this.readyState = this._nativeXhr.readyState;
+          this.status = this._nativeXhr.status;
+          this.statusText = this._nativeXhr.statusText;
+          this.responseText = this._nativeXhr.responseText;
+          this.response = this._nativeXhr.response;
+          if (typeof this.onload === 'function') {
+            this.onload();
+          }
+          this.dispatchEvent(new Event('load'));
+        };
+
+        this._nativeXhr.onerror = (err) => {
+          if (typeof this.onerror === 'function') {
+            this.onerror(err);
+          }
+          this.dispatchEvent(new Event('error'));
+        };
+
+        this._nativeXhr.open(method, url, async !== false, user, password);
+      }
+    }
+
+    setRequestHeader(header, value) {
+      this._headers[header] = value;
+      if (this._nativeXhr) {
+        this._nativeXhr.setRequestHeader(header, value);
+      }
+    }
+
+    _isDirectUpload() {
+      return typeof this._url === 'string' && this._url.includes('/upload-direct');
+    }
+
+    send(body) {
+      const isFile = body instanceof Blob || (typeof File !== 'undefined' && body instanceof File);
+
+      if (this._method === 'PUT' && this._isDirectUpload() && isFile) {
+        this._performChunkedUpload(body);
+        return;
+      }
+
+      if (this._nativeXhr) {
+        this._nativeXhr.send(body);
+      }
+    }
+
+    async _performChunkedUpload(fileBlob) {
       try {
-        const urlObj = new URL(xhr._customUrl, window.location.href);
-        filename = urlObj.searchParams.get('filename') || 'media.mp4';
-      } catch (_) {}
-
-      const contentType = fileBlob.type || (xhr._customHeaders && xhr._customHeaders['Content-Type']) || 'video/mp4';
-      const token = getAuthToken();
-      const uploadId = randomId();
-      const totalChunks = Math.max(1, Math.ceil(fileBlob.size / CHUNK_SIZE));
-
-      console.log('[ChunkedUpload] Slicing upload:', filename, '| size:', (fileBlob.size / (1024 * 1024)).toFixed(2), 'MB | chunks:', totalChunks);
-
-      (async function () {
+        let filename = 'media.mp4';
         try {
-          for (let i = 0; i < totalChunks; i++) {
-            const start = i * CHUNK_SIZE;
-            const end = Math.min(start + CHUNK_SIZE, fileBlob.size);
-            const slice = fileBlob.slice(start, end, contentType);
+          const urlObj = new URL(this._url, window.location.href);
+          filename = urlObj.searchParams.get('filename') || 'media.mp4';
+        } catch (_) {}
 
-            const form = new FormData();
-            form.append('upload_id', uploadId);
-            form.append('chunk_index', String(i));
-            form.append('total_chunks', String(totalChunks));
-            form.append('file', slice, 'chunk');
+        const contentType = fileBlob.type || this._headers['Content-Type'] || 'video/mp4';
+        const token = getAuthToken();
+        const uploadId = randomId();
+        const totalChunks = Math.max(1, Math.ceil(fileBlob.size / CHUNK_SIZE));
 
-            const h = {};
-            if (token) h['Authorization'] = 'Bearer ' + token;
+        console.log('[ChunkedUpload] Splitting upload:', filename, '| size:', (fileBlob.size / (1024 * 1024)).toFixed(2), 'MB | chunks:', totalChunks);
 
-            const res = await fetch(CHUNK_URL, { method: 'POST', headers: h, body: form });
-            if (!res.ok) {
-              const errText = await res.text().catch(() => String(res.status));
-              throw new Error('Chunk ' + (i + 1) + '/' + totalChunks + ' error (' + res.status + '): ' + errText);
-            }
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, fileBlob.size);
+          const slice = fileBlob.slice(start, end, contentType);
 
-            // Fire progress on xhr.upload
-            const pct = Math.round(((i + 1) / totalChunks) * 90);
-            try {
-              if (xhr.upload && typeof xhr.upload.onprogress === 'function') {
-                xhr.upload.onprogress({ lengthComputable: true, loaded: pct, total: 100 });
-              }
-            } catch (_) {}
+          const form = new FormData();
+          form.append('upload_id', uploadId);
+          form.append('chunk_index', String(i));
+          form.append('total_chunks', String(totalChunks));
+          form.append('file', slice, 'chunk');
+
+          const h = {};
+          if (token) h['Authorization'] = 'Bearer ' + token;
+
+          const res = await fetch(CHUNK_URL, { method: 'POST', headers: h, body: form });
+          if (!res.ok) {
+            const errText = await res.text().catch(() => String(res.status));
+            throw new Error('Chunk ' + (i + 1) + '/' + totalChunks + ' failed with status ' + res.status + ': ' + errText);
           }
 
-          // Assemble chunks
-          const asmHeaders = { 'Content-Type': 'application/json' };
-          if (token) asmHeaders['Authorization'] = 'Bearer ' + token;
-
-          const asmRes = await fetch(ASSEMBLE_URL, {
-            method: 'POST',
-            headers: asmHeaders,
-            body: JSON.stringify({
-              upload_id: uploadId,
-              total_chunks: totalChunks,
-              filename: filename,
-              content_type: contentType,
-            }),
-          });
-
-          if (!asmRes.ok) {
-            const errText = await asmRes.text().catch(() => String(asmRes.status));
-            throw new Error('Assembly error (' + asmRes.status + '): ' + errText);
+          const pct = Math.round(((i + 1) / totalChunks) * 95);
+          const progEvent = { lengthComputable: true, loaded: pct, total: 100 };
+          if (typeof this.upload.onprogress === 'function') {
+            this.upload.onprogress(progEvent);
           }
-
-          const asmData = await asmRes.json();
-          console.log('[ChunkedUpload] Assembly complete:', asmData);
-
-          try {
-            if (xhr.upload && typeof xhr.upload.onprogress === 'function') {
-              xhr.upload.onprogress({ lengthComputable: true, loaded: 100, total: 100 });
-            }
-          } catch (_) {}
-
-          // Populate standard response properties on native XHR instance
-          Object.defineProperty(xhr, 'readyState', { value: 4, configurable: true, writable: true });
-          Object.defineProperty(xhr, 'status', { value: 200, configurable: true, writable: true });
-          Object.defineProperty(xhr, 'statusText', { value: 'OK', configurable: true, writable: true });
-          Object.defineProperty(xhr, 'responseText', { value: JSON.stringify(asmData), configurable: true, writable: true });
-          Object.defineProperty(xhr, 'response', { value: JSON.stringify(asmData), configurable: true, writable: true });
-
-          if (typeof xhr.onload === 'function') {
-            xhr.onload();
-          }
-          if (typeof xhr.onreadystatechange === 'function') {
-            xhr.onreadystatechange();
-          }
-          try {
-            xhr.dispatchEvent(new Event('load'));
-            xhr.dispatchEvent(new Event('loadend'));
-          } catch (_) {}
-
-        } catch (err) {
-          console.error('[ChunkedUpload] Upload failed:', err);
-          Object.defineProperty(xhr, 'readyState', { value: 4, configurable: true, writable: true });
-          Object.defineProperty(xhr, 'status', { value: 500, configurable: true, writable: true });
-          Object.defineProperty(xhr, 'statusText', { value: 'Upload Error', configurable: true, writable: true });
-
-          if (typeof xhr.onerror === 'function') {
-            xhr.onerror(err);
-          } else if (typeof xhr.onload === 'function') {
-            xhr.onload();
-          }
-          try {
-            xhr.dispatchEvent(new Event('error'));
-            xhr.dispatchEvent(new Event('loadend'));
-          } catch (_) {}
         }
-      })();
 
-      return;
+        // Assemble chunks
+        const asmHeaders = { 'Content-Type': 'application/json' };
+        if (token) asmHeaders['Authorization'] = 'Bearer ' + token;
+
+        const asmRes = await fetch(ASSEMBLE_URL, {
+          method: 'POST',
+          headers: asmHeaders,
+          body: JSON.stringify({
+            upload_id: uploadId,
+            total_chunks: totalChunks,
+            filename: filename,
+            content_type: contentType,
+          }),
+        });
+
+        if (!asmRes.ok) {
+          const errText = await asmRes.text().catch(() => String(asmRes.status));
+          throw new Error('Assemble failed with status ' + asmRes.status + ': ' + errText);
+        }
+
+        const asmData = await asmRes.json();
+        console.log('[ChunkedUpload] Assembly complete:', asmData);
+
+        const doneProg = { lengthComputable: true, loaded: 100, total: 100 };
+        if (typeof this.upload.onprogress === 'function') {
+          this.upload.onprogress(doneProg);
+        }
+
+        this.readyState = 4;
+        this.status = 200;
+        this.statusText = 'OK';
+        this.responseText = JSON.stringify(asmData);
+        this.response = JSON.stringify(asmData);
+
+        if (typeof this.onreadystatechange === 'function') {
+          this.onreadystatechange();
+        }
+        if (typeof this.onload === 'function') {
+          this.onload();
+        }
+        if (typeof this.onloadend === 'function') {
+          this.onloadend();
+        }
+        this.dispatchEvent(new Event('load'));
+        this.dispatchEvent(new Event('loadend'));
+
+      } catch (err) {
+        console.error('[ChunkedUpload] Upload error:', err);
+        this.readyState = 4;
+        this.status = 500;
+        this.statusText = 'Upload Error';
+
+        if (typeof this.onerror === 'function') {
+          this.onerror(err);
+        }
+        if (typeof this.onloadend === 'function') {
+          this.onloadend();
+        }
+        this.dispatchEvent(new Event('error'));
+        this.dispatchEvent(new Event('loadend'));
+      }
     }
+  }
 
-    return rawSend.apply(this, arguments);
-  };
+  // Install custom XMLHttpRequest constructor
+  window.XMLHttpRequest = ChunkedXMLHttpRequest;
 
-  console.log('[ChunkedUpload] Prototype-based XHR interceptor successfully installed.');
+  console.log('[ChunkedUpload] Robust ChunkedXMLHttpRequest installed.');
 })();

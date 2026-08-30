@@ -20,15 +20,23 @@ from pydantic import BaseModel
 router = APIRouter()
 
 def get_upload_dir() -> Path:
+    import tempfile
     if os.getenv("VERCEL"):
         upload_dir = Path("/tmp/uploads")
     else:
-        upload_dir = Path("static/uploads")
+        # Resolve absolute path based on backend location
+        backend_base = Path(__file__).resolve().parents[3]
+        upload_dir = backend_base / "static" / "uploads"
+        if not upload_dir.parent.exists():
+            upload_dir = Path(__file__).resolve().parents[2] / "static" / "uploads"
     try:
         upload_dir.mkdir(parents=True, exist_ok=True)
+        return upload_dir
     except Exception:
-        pass
-    return upload_dir
+        fallback = Path(tempfile.gettempdir()) / "podule_uploads"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
 
 async def run_deepgram_transcription_pipeline(audio_url: str, timestamps: bool = True) -> dict:
     from app.services.llm import run_local_whisper_transcription
