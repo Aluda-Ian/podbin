@@ -13,6 +13,7 @@ from app.models.notification import Notification
 from app.models.social_connection import SocialConnection
 from app.models.social_post import SocialPost
 from app.models.ai_task import AITask
+from app.models.video_upload import VideoUpload
 
 # Secure key encryption helper
 ENCRYPTION_SALT = os.getenv("ENCRYPTION_SALT", "podule_secure_salt")
@@ -340,7 +341,8 @@ class BeanieDatabaseService:
                         Notification,
                         SocialConnection,
                         SocialPost,
-                        AITask
+                        AITask,
+                        VideoUpload,
                     ]
                 )
                 self._beanie_initialized = True
@@ -1096,5 +1098,137 @@ class BeanieDatabaseService:
             "read": False
         }
         return await self.create_notification(notif_data)
+
+    # ── VideoUpload Operations ─────────────────────────────────────────────────
+
+    async def create_video_upload(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Persist a new VideoUpload document to MongoDB Atlas.
+
+        *data* must contain at minimum: user_id, filename.
+        All other fields fall back to the model defaults.
+        Returns the saved document as a plain dict (id included).
+        """
+        await self.ensure_db_initialized()
+        from datetime import datetime as _dt
+
+        record: Dict[str, Any] = {
+            "user_id":       data.get("user_id", ""),
+            "user_email":    data.get("user_email", ""),
+            "filename":      data.get("filename", ""),
+            "original_name": data.get("original_name", ""),
+            "download_url":  data.get("download_url", ""),
+            "storage":       data.get("storage", "local"),
+            "content_type":  data.get("content_type", "video/mp4"),
+            "size_bytes":    int(data.get("size_bytes", 0)),
+            "duration_secs": data.get("duration_secs"),
+            "episode_id":    data.get("episode_id"),
+            "podcast_id":    data.get("podcast_id", "podcast-1"),
+            "status":        data.get("status", "ready"),
+            "uploaded_at":   _dt.utcnow().isoformat(),
+        }
+
+        if self.is_db_ready:
+            try:
+                doc = VideoUpload(**{k: v for k, v in record.items() if k != "uploaded_at"})
+                await doc.insert()
+                record["id"] = str(doc.id)
+                print(f"[VideoUpload] Saved to Atlas — id={record['id']} user={record['user_id']}")
+            except Exception as exc:
+                print(f"[VideoUpload] Atlas write error: {exc}")
+                record["id"] = f"local-{record['filename']}"
+        else:
+            record["id"] = f"local-{record['filename']}"
+
+        return record
+
+    async def get_video_uploads_by_user(self, user_id: str) -> List[Dict[str, Any]]:
+        """Return all video uploads owned by *user_id*, newest first."""
+        await self.ensure_db_initialized()
+
+        if self.is_db_ready:
+            try:
+                docs = await VideoUpload.find(
+                    VideoUpload.user_id == user_id
+                ).sort(-VideoUpload.uploaded_at).to_list()
+                return [
+                    {
+                        "id":            str(d.id),
+                        "user_id":       d.user_id,
+                        "user_email":    d.user_email,
+                        "filename":      d.filename,
+                        "original_name": d.original_name,
+                        "download_url":  d.download_url,
+                        "storage":       d.storage,
+                        "content_type":  d.content_type,
+                        "size_bytes":    d.size_bytes,
+                        "duration_secs": d.duration_secs,
+                        "episode_id":    d.episode_id,
+                        "podcast_id":    d.podcast_id,
+                        "status":        d.status,
+                        "uploaded_at":   d.uploaded_at.isoformat() if d.uploaded_at else None,
+                    }
+                    for d in docs
+                ]
+            except Exception as exc:
+                print(f"[VideoUpload] Atlas read error: {exc}")
+
+        return []
+
+    async def get_all_video_uploads(self) -> List[Dict[str, Any]]:
+        """Return every VideoUpload document (admin view), newest first."""
+        await self.ensure_db_initialized()
+
+        if self.is_db_ready:
+            try:
+                docs = await VideoUpload.find_all().sort(-VideoUpload.uploaded_at).to_list()
+                return [
+                    {
+                        "id":            str(d.id),
+                        "user_id":       d.user_id,
+                        "user_email":    d.user_email,
+                        "filename":      d.filename,
+                        "original_name": d.original_name,
+                        "download_url":  d.download_url,
+                        "storage":       d.storage,
+                        "content_type":  d.content_type,
+                        "size_bytes":    d.size_bytes,
+                        "duration_secs": d.duration_secs,
+                        "episode_id":    d.episode_id,
+                        "podcast_id":    d.podcast_id,
+                        "status":        d.status,
+                        "uploaded_at":   d.uploaded_at.isoformat() if d.uploaded_at else None,
+                    }
+                    for d in docs
+                ]
+            except Exception as exc:
+                print(f"[VideoUpload] Atlas read-all error: {exc}")
+
+        return []
+
+    async def delete_video_upload(self, video_id: str, user_id: Optional[str] = None) -> bool:
+        """
+        Delete a VideoUpload by its Atlas document ID.
+        If *user_id* is supplied the document is only deleted when it belongs
+        to that user (ownership check).
+        Returns True if deleted, False if not found / not authorised.
+        """
+        await self.ensure_db_initialized()
+
+        if self.is_db_ready:
+            try:
+                from beanie import PydanticObjectId
+                doc = await VideoUpload.get(PydanticObjectId(video_id))
+                if not doc:
+                    return False
+                if user_id and doc.user_id != user_id:
+                    return False   # ownership mismatch
+                await doc.delete()
+                print(f"[VideoUpload] Deleted id={video_id}")
+                return True
+            except Exception as exc:
+                print(f"[VideoUpload] Atlas delete error: {exc}")
+
+        return False
 
 db = BeanieDatabaseService()

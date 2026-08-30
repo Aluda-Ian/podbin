@@ -1,4 +1,4 @@
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException, status, Body, Request
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, status, Body, Request, Header
 from fastapi.responses import StreamingResponse
 from fastapi.responses import FileResponse
 from typing import Optional, List, Dict, Any
@@ -308,7 +308,10 @@ async def serve_media_file(filename: str):
     raise HTTPException(status_code=404, detail="Media file not found")
 
 @router.post("/confirm-upload", response_model=EpisodeResponse, status_code=status.HTTP_201_CREATED)
-async def confirm_episode_upload(payload: ConfirmUploadRequest = Body(...)):
+async def confirm_episode_upload(
+    payload: ConfirmUploadRequest = Body(...),
+    authorization: Optional[str] = Header(None)
+):
     """Register episode with cloud storage URL after direct frontend upload."""
     media_url = payload.raw_video_url or payload.raw_audio_url or payload.media_url
     if not media_url:
@@ -353,6 +356,36 @@ async def confirm_episode_upload(payload: ConfirmUploadRequest = Body(...)):
     
     added_ep = await db.add_episode(new_ep)
     
+    # If video media is present, link and persist a VideoUpload document in Atlas
+    if is_video and media_url:
+        try:
+            user_id = "user-1"
+            user_email = ""
+            if authorization:
+                try:
+                    from app.core.security import verify_token
+                    caller = await verify_token(authorization)
+                    user_id = caller.get("id") or caller.get("_id") or caller.get("sub") or user_id
+                    user_email = caller.get("email", "")
+                except Exception:
+                    pass
+
+            fn = Path(media_url.split("?")[0]).name
+            await db.create_video_upload({
+                "user_id": user_id,
+                "user_email": user_email,
+                "filename": fn,
+                "original_name": payload.title or fn,
+                "download_url": media_url,
+                "storage": "gridfs" if db.is_db_ready else "local",
+                "content_type": "video/mp4",
+                "episode_id": added_ep["id"],
+                "podcast_id": payload.podcast_id or "podcast-1",
+                "status": "ready"
+            })
+        except Exception as vid_err:
+            print(f"[VideoUpload] Notice: {vid_err}")
+
     try:
         import uuid
         appr_id = f"appr-{str(uuid.uuid4())[:8]}"
