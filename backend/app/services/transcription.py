@@ -157,33 +157,49 @@ async def run_openai_whisper_api_transcription(media_path_or_url: str, api_key: 
 
 
 async def run_gemini_api_transcription(media_path_or_url: str, api_key: str) -> Dict[str, Any]:
-    """Transcribe using Google Gemini 1.5 Flash."""
+    """Transcribe audio or video using Google Gemini 1.5 Flash multimodal AI."""
+    import mimetypes
+    import base64
+
+    # Determine MIME type
+    clean_url = media_path_or_url.split("?")[0].lower()
+    if clean_url.endswith(".mp4") or clean_url.endswith(".mov") or clean_url.endswith(".webm") or clean_url.endswith(".mkv"):
+        mime_type = "video/mp4"
+    elif clean_url.endswith(".wav"):
+        mime_type = "audio/wav"
+    elif clean_url.endswith(".m4a") or clean_url.endswith(".aac"):
+        mime_type = "audio/m4a"
+    else:
+        mime_type = "audio/mp3"
+
     prompt = (
-        "You are an expert audio/video transcriber. Transcribe the spoken words from this audio completely and accurately with punctuation. "
-        "Return the transcript text directly."
+        "You are an expert audio and video transcriber. Listen carefully and provide the complete, verbatim transcription of the speech. "
+        "Include punctuation, capitalization, and speaker labels if multiple speakers exist. Return only the transcription text."
     )
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
 
     async with httpx.AsyncClient(timeout=180.0) as client:
-        # Download media into base64 if needed or fetch
         media_bytes = b""
         if media_path_or_url.startswith("http://") or media_path_or_url.startswith("https://"):
-            dl = await client.get(media_path_or_url, follow_redirects=True, timeout=60.0)
+            dl = await client.get(media_path_or_url, follow_redirects=True, timeout=90.0)
             media_bytes = dl.content
         else:
             with open(media_path_or_url, "rb") as f:
                 media_bytes = f.read()
 
-        import base64
-        b64_data = base64.b64encode(media_bytes[:20 * 1024 * 1024]).decode("ascii") # 20MB inline max
+        # Up to 20 MB inline payload
+        b64_data = base64.b64encode(media_bytes[:20 * 1024 * 1024]).decode("ascii")
 
         payload = {
             "contents": [{
                 "parts": [
                     {"text": prompt},
-                    {"inline_data": {"mime_type": "audio/mp3", "data": b64_data}}
+                    {"inline_data": {"mime_type": mime_type, "data": b64_data}}
                 ]
-            }]
+            }],
+            "generationConfig": {
+                "temperature": 0.2
+            }
         }
         resp = await client.post(url, json=payload)
         resp.raise_for_status()
@@ -193,21 +209,21 @@ async def run_gemini_api_transcription(media_path_or_url: str, api_key: str) -> 
     text = ""
     if candidates:
         parts = candidates[0].get("content", {}).get("parts", [])
-        text = "".join(p.get("text", "") for p in parts)
+        text = "".join(p.get("text", "") for p in parts).strip()
 
-    # Generate word timeline from transcript
+    # Generate timeline words from transcript
     words_list = text.split()
     words = []
     cur_time = 0.0
     for idx, w in enumerate(words_list, start=1):
-        dur = max(0.25, round(len(w) * 0.06, 2))
+        dur = max(0.25, round(len(w) * 0.065, 2))
         words.append({
             "word": w,
             "start": round(cur_time, 2),
             "end": round(cur_time + dur, 2),
             "id": f"w{idx}"
         })
-        cur_time += dur + 0.05
+        cur_time += dur + 0.04
 
     return {
         "transcript": text,
@@ -249,13 +265,22 @@ def generate_fallback_transcript(media_path_or_url: str) -> Dict[str, Any]:
 async def transcribe_media_pipeline(media_path_or_url: str) -> Dict[str, Any]:
     """
     Main entry point for podcast transcription.
-    Tries configured providers in order of priority:
-      1. Deepgram Nova-2
-      2. OpenAI Whisper API
-      3. Google Gemini 1.5 Flash
-      4. Fallback generator
+    Priority order:
+      1. Google Gemini 1.5 Flash (Primary Multimodal Audio/Video Transcriber)
+      2. Deepgram Nova-2 (Secondary Cloud Engine)
+      3. OpenAI Whisper API (Tertiary Cloud Engine)
+      4. Smart Fallback Generator
     """
-    # 1. Deepgram
+    # 1. Google Gemini 1.5 Flash (PRIMARY)
+    gemini_key = await get_gemini_api_key()
+    if gemini_key:
+        try:
+            print("[Transcription] Using Google Gemini 1.5 Flash API (Primary)...")
+            return await run_gemini_api_transcription(media_path_or_url, gemini_key)
+        except Exception as e:
+            print(f"[Transcription] Gemini error: {e}")
+
+    # 2. Deepgram Nova-2
     dg_key = await get_deepgram_api_key()
     if dg_key:
         try:
@@ -264,7 +289,7 @@ async def transcribe_media_pipeline(media_path_or_url: str) -> Dict[str, Any]:
         except Exception as e:
             print(f"[Transcription] Deepgram error: {e}")
 
-    # 2. OpenAI Whisper API
+    # 3. OpenAI Whisper API
     openai_key = await get_openai_api_key()
     if openai_key:
         try:
@@ -272,15 +297,6 @@ async def transcribe_media_pipeline(media_path_or_url: str) -> Dict[str, Any]:
             return await run_openai_whisper_api_transcription(media_path_or_url, openai_key)
         except Exception as e:
             print(f"[Transcription] OpenAI Whisper error: {e}")
-
-    # 3. Google Gemini
-    gemini_key = await get_gemini_api_key()
-    if gemini_key:
-        try:
-            print("[Transcription] Using Google Gemini 1.5 Flash API...")
-            return await run_gemini_api_transcription(media_path_or_url, gemini_key)
-        except Exception as e:
-            print(f"[Transcription] Gemini error: {e}")
 
     # 4. Fallback
     print("[Transcription] No API keys active. Using smart fallback transcription...")
