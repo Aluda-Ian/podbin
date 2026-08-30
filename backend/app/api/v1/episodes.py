@@ -685,40 +685,41 @@ async def transcribe_episode(episode_id: str):
         )
 
     try:
-        dg_res = await run_deepgram_transcription_pipeline(media_url, timestamps=True)
-        transcript = dg_res["transcript"]
-        words = dg_res["words"]
+        dg_res = await transcribe_media_pipeline(media_url)
+        transcript = dg_res.get("transcript", "")
+        words = dg_res.get("words", [])
 
-        initial_state = EpisodeState(
-            raw_audio_url=media_url,
-            transcript=transcript,
-            generated_content={"titles": [], "notes": "", "social_snippets": []},
-            status=EpisodeStatus.RESEARCH,
-            human_feedback=None,
-            word_timeline=words,
-            edit_decision_list=[],
-            selected_llm_config={}
-        )
-        graph_result = await app_graph.ainvoke(initial_state)
-        transcript = graph_result.get("transcript", transcript)
-        words = graph_result.get("word_timeline", words)
+        # Auto-generate video title suggestions, descriptions, and show notes
+        gen_content = {"titles": [], "notes": "", "social_snippets": []}
+        if transcript:
+            try:
+                gen_content = await generate_metadata(transcript)
+            except Exception as e:
+                print(f"[transcribe_episode] metadata generation notice: {e}")
+
+        # Choose the best suggested title if default
+        new_title = ep.get("title")
+        if (not new_title or new_title in ("Ingested Episode", "Test", "Test upload")) and gen_content.get("titles"):
+            new_title = gen_content["titles"][0]
 
         updated = await db.update_episode(episode_id, {
+            "title": new_title,
             "transcript": transcript,
             "word_timeline": words,
-            "generated_content": graph_result.get("generated_content", {"titles": [], "notes": "", "social_snippets": []}),
-            "edit_decision_list": graph_result.get("edit_decision_list", []),
+            "generated_content": gen_content,
             "status": EpisodeStatus.PENDING_REVIEW,
-            "progress": 40,
-            "note": "Transcription complete. Ready for review.",
+            "progress": 50,
+            "note": "Transcription & AI title generation complete. Ready for review.",
         })
+        return updated
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Transcription pipeline failed: {str(e)}"
         )
 
-    return updated
 
 
 class MetadataRequest(BaseModel):

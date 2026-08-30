@@ -21,19 +21,15 @@ async def get_provider_config() -> ProviderConfig:
 
 
 async def get_openai_api_key() -> str:
-    import os
-    db_keys = await db.get_api_keys()
-    openai_key = db_keys.get("openai")
-    if openai_key and not openai_key.startswith("sk-..."):
-        return openai_key.strip()
-    return (os.getenv("OPENAI_API_KEY", "") or settings.OPENAI_API_KEY or "").strip()
+    from app.services.transcription import get_system_api_keys
+    keys = await get_system_api_keys()
+    return keys.get("openai", "")
 
 
 async def get_gemini_api_key() -> str:
-    import os
-    db_keys = await db.get_api_keys()
-    g_key = db_keys.get("gemini") or os.getenv("GEMINI_API_KEY", "")
-    return g_key.strip() if g_key and not g_key.startswith("AIza...") else ""
+    from app.services.transcription import get_system_api_keys
+    keys = await get_system_api_keys()
+    return keys.get("gemini", "")
 
 
 async def generate_gemini_metadata(transcript: str) -> Dict[str, Any]:

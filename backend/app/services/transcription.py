@@ -1,10 +1,8 @@
 """
-transcription.py — Autonomous Multi-Provider Transcription Engine
-==================================================================
-Transcribes audio/video media using configured API credentials:
-  1. Google Gemini 1.5 Flash API (multimodal audio/video transcription & analysis)
-  2. Deepgram Nova-2 API (word-level timestamps & speaker diarization)
-  3. OpenAI Whisper API (whisper-1 model with word timestamps)
+transcription.py — Autonomous Centralized Multi-Provider Transcription Engine
+=============================================================================
+All users automatically inherit the centralized AI configuration and API keys
+set up by the Administrator in the Admin Dashboard (/admin/api-config).
 """
 
 import os
@@ -17,25 +15,72 @@ from typing import Dict, Any, List, Optional
 from app.services.db import db
 
 
-async def get_deepgram_api_key() -> str:
-    """Retrieve Deepgram API key from DB or environment."""
-    db_keys = await db.get_api_keys()
-    key = db_keys.get("deepgram") or os.getenv("DEEPGRAM_API_KEY", "")
-    return key.strip() if key and not key.startswith("dg-...") else ""
+def _clean_key(val: Optional[str]) -> str:
+    """Filter out placeholders, masked values, and test strings."""
+    if not val:
+        return ""
+    val_str = str(val).strip()
+    if "..." in val_str or "[masked]" in val_str or len(val_str) < 10:
+        return ""
+    if val_str.startswith(("AIza-test", "sk-proj-test", "dg-test", "el-test", "test-")):
+        return ""
+    return val_str
 
 
-async def get_openai_api_key() -> str:
-    """Retrieve OpenAI API key from DB or environment."""
+async def get_system_api_keys() -> Dict[str, str]:
+    """
+    Retrieve centralized Admin system API credentials from MongoDB Atlas or active environment.
+    All users and episode pipelines inherit these keys.
+    """
     db_keys = await db.get_api_keys()
-    key = db_keys.get("openai") or os.getenv("OPENAI_API_KEY", "")
-    return key.strip() if key and not key.startswith("sk-...") else ""
+    settings_data = await db.get_settings()
+    custom_key = settings_data.get("provider_config", {}).get("custom_api_key", "")
+
+    gemini_key = (
+        _clean_key(db_keys.get("gemini")) or
+        _clean_key(custom_key) or
+        _clean_key(os.getenv("GEMINI_API_KEY")) or
+        _clean_key(os.getenv("GOOGLE_API_KEY")) or
+        _clean_key(os.getenv("GOOGLE_GEMINI_API_KEY"))
+    )
+
+    openai_key = (
+        _clean_key(db_keys.get("openai")) or
+        _clean_key(custom_key) or
+        _clean_key(os.getenv("OPENAI_API_KEY"))
+    )
+
+    deepgram_key = (
+        _clean_key(db_keys.get("deepgram")) or
+        _clean_key(os.getenv("DEEPGRAM_API_KEY"))
+    )
+
+    elevenlabs_key = (
+        _clean_key(db_keys.get("elevenlabs")) or
+        _clean_key(os.getenv("ELEVENLABS_API_KEY"))
+    )
+
+    return {
+        "gemini": gemini_key,
+        "openai": openai_key,
+        "deepgram": deepgram_key,
+        "elevenlabs": elevenlabs_key,
+    }
 
 
 async def get_gemini_api_key() -> str:
-    """Retrieve Gemini API key from DB or environment."""
-    db_keys = await db.get_api_keys()
-    key = db_keys.get("gemini") or os.getenv("GEMINI_API_KEY", "")
-    return key.strip() if key and not key.startswith("AIza...") else ""
+    keys = await get_system_api_keys()
+    return keys["gemini"]
+
+
+async def get_openai_api_key() -> str:
+    keys = await get_system_api_keys()
+    return keys["openai"]
+
+
+async def get_deepgram_api_key() -> str:
+    keys = await get_system_api_keys()
+    return keys["deepgram"]
 
 
 def extract_youtube_video_id(url: str) -> Optional[str]:
@@ -63,7 +108,6 @@ async def run_gemini_api_transcription(media_path_or_url: str, api_key: str) -> 
         vid_id = extract_youtube_video_id(media_path_or_url)
         yt_watch_url = f"https://www.youtube.com/watch?v={vid_id}" if vid_id else media_path_or_url
 
-        # Fetch oEmbed video metadata for extra context
         yt_title = ""
         yt_author = ""
         try:
@@ -82,7 +126,7 @@ async def run_gemini_api_transcription(media_path_or_url: str, api_key: str) -> 
             f"URL: {yt_watch_url}\n"
             f"Title: {yt_title}\n"
             f"Author/Speaker: {yt_author}\n\n"
-            f"Provide the complete, verbatim transcription of the dialogue, speech, and content in this video. "
+            f"Provide the complete, verbatim transcription of all spoken dialogue, speech, and content in this video. "
             f"Do not write a generic summary. Produce the full transcript with natural sentences and paragraph breaks."
         )
 
@@ -102,7 +146,6 @@ async def run_gemini_api_transcription(media_path_or_url: str, api_key: str) -> 
             data = resp.json()
 
     else:
-        # Direct file or uploaded URL
         clean_url = media_path_or_url.split("?")[0].lower()
         if clean_url.endswith(".mp4") or clean_url.endswith(".mov") or clean_url.endswith(".webm") or clean_url.endswith(".mkv"):
             mime_type = "video/mp4"
@@ -134,7 +177,6 @@ async def run_gemini_api_transcription(media_path_or_url: str, api_key: str) -> 
             "Include punctuation, capitalization, and speaker labels if multiple speakers exist. Return only the transcription text."
         )
 
-        # Inline base64 payload (up to 20 MB)
         b64_data = base64.b64encode(media_bytes[:20 * 1024 * 1024]).decode("ascii")
         payload = {
             "contents": [{
@@ -162,7 +204,6 @@ async def run_gemini_api_transcription(media_path_or_url: str, api_key: str) -> 
     if not text:
         raise RuntimeError("Gemini returned empty transcription text.")
 
-    # Generate timeline words from transcript
     words_list = text.split()
     words = []
     cur_time = 0.0
@@ -307,15 +348,17 @@ async def run_openai_whisper_api_transcription(media_path_or_url: str, api_key: 
 async def transcribe_media_pipeline(media_path_or_url: str) -> Dict[str, Any]:
     """
     Main entry point for podcast transcription.
+    Uses centralized Administrator AI credentials (synced across all platform users).
     Priority order:
       1. Google Gemini 1.5 Flash (Primary Multimodal Audio/Video Transcriber)
       2. Deepgram Nova-2 (Secondary Cloud Engine)
       3. OpenAI Whisper API (Tertiary Cloud Engine)
     """
+    sys_keys = await get_system_api_keys()
     errors = []
 
     # 1. Google Gemini 1.5 Flash (PRIMARY)
-    gemini_key = await get_gemini_api_key()
+    gemini_key = sys_keys.get("gemini")
     if gemini_key:
         try:
             print("[Transcription] Transcribing with Google Gemini 1.5 Flash API (Primary)...")
@@ -325,7 +368,7 @@ async def transcribe_media_pipeline(media_path_or_url: str) -> Dict[str, Any]:
             errors.append(f"Gemini: {e}")
 
     # 2. Deepgram Nova-2
-    dg_key = await get_deepgram_api_key()
+    dg_key = sys_keys.get("deepgram")
     if dg_key:
         try:
             print("[Transcription] Transcribing with Deepgram Nova-2 API...")
@@ -335,7 +378,7 @@ async def transcribe_media_pipeline(media_path_or_url: str) -> Dict[str, Any]:
             errors.append(f"Deepgram: {e}")
 
     # 3. OpenAI Whisper API
-    openai_key = await get_openai_api_key()
+    openai_key = sys_keys.get("openai")
     if openai_key:
         try:
             print("[Transcription] Transcribing with OpenAI Whisper API...")
@@ -344,8 +387,8 @@ async def transcribe_media_pipeline(media_path_or_url: str) -> Dict[str, Any]:
             print(f"[Transcription] OpenAI Whisper error: {e}")
             errors.append(f"OpenAI Whisper: {e}")
 
-    # If no provider succeeded, raise an informative error guiding the user
-    err_summary = "; ".join(errors) if errors else "No active API keys found."
+    # If no provider succeeded, raise a clear error
+    err_summary = "; ".join(errors) if errors else "No active Admin API keys found."
     raise RuntimeError(
-        f"Transcription failed ({err_summary}). Please configure a valid Gemini API Key, Deepgram Key, or OpenAI Key in the Admin Dashboard (API Configuration)."
+        f"Transcription failed ({err_summary}). Please enter and save your Gemini API Key in the Admin Dashboard (API Configuration)."
     )
