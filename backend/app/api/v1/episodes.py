@@ -39,16 +39,9 @@ def get_upload_dir() -> Path:
 
 
 async def run_deepgram_transcription_pipeline(audio_url: str, timestamps: bool = True) -> dict:
-    from app.services.llm import run_local_whisper_transcription
-    from app.services.transcription import get_deepgram_api_key
+    from app.services.transcription import transcribe_media_pipeline
+    return await transcribe_media_pipeline(audio_url)
 
-    deepgram_key = await get_deepgram_api_key()
-
-    if not deepgram_key or deepgram_key.startswith("dg-...") or "mock" in deepgram_key.lower() or "sandbox" in deepgram_key.lower():
-        print("No real Deepgram key configured. Running local fallback Whisper transcription...")
-        return await run_local_whisper_transcription(audio_url)
-    else:
-        return await run_local_whisper_transcription(audio_url)
 
 class EpisodeCreate(BaseModel):
     title: Optional[str] = "Ingested Episode"

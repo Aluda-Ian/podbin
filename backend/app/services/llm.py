@@ -22,28 +22,18 @@ async def get_provider_config() -> ProviderConfig:
 
 async def get_openai_api_key() -> str:
     import os
-    settings_data = await db.get_settings()
-    operational_tier = settings_data.get("operational_tier", "FREE")
-    provider_config = settings_data.get("provider_config", {})
-    provider_tier = provider_config.get("tier", ProviderTier.PLATFORM_FREE)
-
-    if operational_tier != "BYO" and provider_tier != ProviderTier.BYO_KEY:
-        return os.getenv("OPENAI_API_KEY", "") or settings.OPENAI_API_KEY or ""
-
-    storage_target = settings_data.get("api_storage_target") or "database"
-    if storage_target == "database":
-        db_keys = await db.get_api_keys()
-        openai_key = db_keys.get("openai")
-        if openai_key:
-            return openai_key
-    return settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "")
+    db_keys = await db.get_api_keys()
+    openai_key = db_keys.get("openai")
+    if openai_key and not openai_key.startswith("sk-..."):
+        return openai_key.strip()
+    return (os.getenv("OPENAI_API_KEY", "") or settings.OPENAI_API_KEY or "").strip()
 
 
 async def get_gemini_api_key() -> str:
     import os
     db_keys = await db.get_api_keys()
     g_key = db_keys.get("gemini") or os.getenv("GEMINI_API_KEY", "")
-    return g_key.strip() if g_key else ""
+    return g_key.strip() if g_key and not g_key.startswith("AIza...") else ""
 
 
 async def generate_gemini_metadata(transcript: str) -> Dict[str, Any]:
@@ -58,24 +48,23 @@ async def generate_gemini_metadata(transcript: str) -> Dict[str, Any]:
         "2. Detailed show notes (2-3 paragraphs summarizing key topics)\n"
         "3. 3 social promotion snippets for Twitter/Instagram\n\n"
         "Return valid JSON object with keys:\n"
-        "- 'titles': array of title strings\n"
-        "- 'notes': show notes string\n"
-        "- 'social_snippets': array of snippet strings\n\n"
-        f"Transcript:\n{transcript}"
+        '{\n  "titles": ["title 1", "title 2", "title 3"],\n  "notes": "show notes markdown...",\n  "social_snippets": ["snippet 1", "snippet 2"]\n}'
     )
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={gemini_key}"
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
+        "contents": [{
+            "parts": [
+                {"text": f"{prompt}\n\nTranscript:\n{transcript[:8000]}"}
+            ]
+        }],
         "generationConfig": {
-            "response_mime_type": "application/json",
-            "temperature": 0.7,
-            "maxOutputTokens": 1500
+            "response_mime_type": "application/json"
         }
     }
 
-    async with httpx.AsyncClient(timeout=25.0) as client:
-        resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, json=payload)
         if resp.status_code != 200:
             raise RuntimeError(f"Gemini API returned error {resp.status_code}: {resp.text}")
         data = resp.json()
@@ -84,11 +73,11 @@ async def generate_gemini_metadata(transcript: str) -> Dict[str, Any]:
             return json.loads(raw_text)
         except (KeyError, IndexError, json.JSONDecodeError) as err:
             print(f"[GEMINI METADATA PARSE ERROR] {err}")
-            return {"titles": ["Episode Overview"], "notes": transcript[:300] + "...", "social_snippets": []}
+            return {"titles": ["Episode Overview", "Autonomous AI Insights"], "notes": transcript[:300] + "...", "social_snippets": []}
 
 
 async def generate_metadata(transcript: str) -> Dict[str, Any]:
-    # Check if Gemini key is available and configured
+    # 1. Try Gemini
     gemini_key = await get_gemini_api_key()
     provider = await get_provider_config()
 
@@ -98,40 +87,50 @@ async def generate_metadata(transcript: str) -> Dict[str, Any]:
         except Exception as e:
             print(f"[LLM NOTICE] Gemini metadata fallback to OpenAI: {e}")
 
-    system_prompt = (
-        "You are a podcast metadata specialist. Given a transcript, generate:\n"
-        "1. A list of 3-5 episode title suggestions (concise, engaging)\n"
-        "2. Detailed show notes (2-3 paragraphs summarizing key topics)\n"
-        "Return JSON with keys 'titles' (list of strings) and 'notes' (string)."
-    )
+    # 2. Try OpenAI
+    api_key = provider.custom_api_key if (provider.tier == ProviderTier.BYO_KEY and provider.custom_api_key) else await get_openai_api_key()
+    if api_key:
+        try:
+            system_prompt = (
+                "You are a podcast metadata specialist. Given a transcript, generate:\n"
+                "1. A list of 3-5 episode title suggestions (concise, engaging)\n"
+                "2. Detailed show notes (2-3 paragraphs summarizing key topics)\n"
+                "Return JSON with keys 'titles' (list of strings) and 'notes' (string)."
+            )
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=_resolve_base_url(provider.custom_provider),
+            )
+            model = "gpt-4o-mini"
+            resp = await client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Transcript:\n\n{transcript[:8000]}"},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.7,
+                max_tokens=1500,
+            )
+            raw = resp.choices[0].message.content or "{}"
+            return json.loads(raw)
+        except Exception as e:
+            print(f"[LLM ERROR] OpenAI generation error: {e}")
 
-    if provider.tier == ProviderTier.BYO_KEY and provider.custom_api_key:
-        client = AsyncOpenAI(
-            api_key=provider.custom_api_key,
-            base_url=_resolve_base_url(provider.custom_provider),
-        )
-        model = "gpt-4o"
-    elif provider.tier == ProviderTier.PLATFORM_PAID:
-        api_key = await get_openai_api_key()
-        client = AsyncOpenAI(api_key=api_key)
-        model = "gpt-4o"
-    else:
-        api_key = await get_openai_api_key()
-        client = AsyncOpenAI(api_key=api_key)
-        model = "gpt-4o-mini"
-
-    resp = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Transcript:\n\n{transcript}"},
+    # 3. Graceful fallback if no LLM key active
+    first_lines = transcript.strip().split("\n")[0][:80]
+    return {
+        "titles": [
+            f"Episode: {first_lines}..." if first_lines else "Autonomous Podcast Episode",
+            "Deep Dive & Core Strategies",
+            "Unlocking AI Scale & Operations"
         ],
-        response_format={"type": "json_object"},
-        temperature=0.7,
-        max_tokens=1500,
-    )
-    raw = resp.choices[0].message.content or "{}"
-    return json.loads(raw)
+        "notes": f"### Episode Overview\n\n{transcript[:500]}...\n\n*Generated by Podule Studio Automation.*",
+        "social_snippets": [
+            "🎙️ New episode is live! Exploring the breakthrough strategies shaping our industry today. Check it out now!",
+            "Key takeaways from today's discussion on operations, automation, and intelligent scaling. 🚀"
+        ]
+    }
 
 
 def _resolve_base_url(provider: str | None) -> str | None:

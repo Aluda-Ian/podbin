@@ -9,7 +9,7 @@
 (function () {
   'use strict';
 
-  const CHUNK_SIZE   = 5 * 1024 * 1024;   // 5 MB per chunk
+  const CHUNK_SIZE   = 3 * 1024 * 1024;   // 3 MB per chunk (well within Vercel 4.5 MB limit)
   const API_BASE     = '/api/v1/episodes';
   const CHUNK_URL    = API_BASE + '/upload-chunk';
   const ASSEMBLE_URL = API_BASE + '/upload-assemble';
